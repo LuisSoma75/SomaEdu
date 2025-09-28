@@ -1,0 +1,119 @@
+:root{
+  --bg: var(--bg, #0b1020);
+  --card: var(--card, #0f172a);
+  --line: var(--line, #1f2937);
+  --fg: var(--fg, #e5e7eb);
+  --muted: var(--muted, #94a3b8);
+  --brand: var(--brand, #3b82f6);
+  --good: var(--good, #22c55e);
+  --warn: var(--warn, #f59e0b);
+  --bad: var(--bad, #ef4444);
+}
+
+/* Contenedor */
+.rpt{ display: grid; gap: 16px; color: var(--fg); }
+.rpt-header{ display: grid; gap: 6px; }
+.rpt-title{ margin: 0; font-size: clamp(20px, 2.2vw, 26px); letter-spacing: .2px; }
+
+/* Tarjeta base (mismo patrón que otras pantallas) */
+.card{
+  background: linear-gradient(180deg, var(--card), #0b1225);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.25);
+}
+.card-title{ margin: 0 0 10px; font-size: 16px; letter-spacing: .3px; }
+.muted{ color: var(--muted); }
+
+/* Filtros */
+.rpt-filters{
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(12, 1fr);
+}
+.rpt-field{
+  display: grid; gap: 6px;
+  grid-column: span 3;
+}
+.rpt-field.wide{ grid-column: span 6; }
+.rpt-field > span{ color: var(--muted); font-size: 13px; }
+.rpt-field select,
+.rpt-field input[type="text"],
+.rpt-field input[type="date"]{
+  background: #0c1428; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; outline: none;
+}
+.rpt-range{
+  display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center;
+}
+.rpt-range .sep{ color: var(--muted); font-size: 12px; }
+
+/* Grid de gráficas */
+.rpt-grid{
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 16px;
+}
+.chart-card{ grid-column: span 4; }
+
+/* Tabla */
+.table{ width: 100%; border-collapse: collapse; }
+.table th, .table td{
+  border-bottom: 1px solid var(--line);
+  padding: 10px 8px;
+  text-align: left;
+  font-size: 14px;
+}
+.table th{ color: var(--muted); font-weight: 600; }
+.t-right{ text-align: right; }
+
+.rpt-table-actions{ display: flex; justify-content: flex-end; margin-bottom: 8px; }
+
+/* Botones (consistentes con el dashboard) */
+.btn{
+  appearance: none; border: 1px solid var(--line); background: #0c1328;
+  color: var(--fg); padding: 10px 14px; border-radius: 10px; cursor: pointer;
+  transition: transform .06s ease, background .15s ease, border-color .15s ease;
+}
+.btn:hover{ background: #0f1a38; border-color: #2b3b55; }
+.btn:active{ transform: translateY(1px); }
+.btn.primary{ background: linear-gradient(145deg, #2563eb, #3b82f6); border-color: transparent; }
+.btn.sm{ padding: 6px 10px; border-radius: 8px; }
+
+/* Pills para valores */
+.pill{
+  display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--line);
+}
+.pill.code{
+  background: rgba(99,102,241,.12); color: #c7d2fe; border-color: rgba(99,102,241,.35);
+}
+.pill.ok{
+  background: rgba(34,197,94,.12); color: #bbf7d0; border-color: rgba(34,197,94,.3);
+}
+.pill.low{
+  background: rgba(239,68,68,.12); color: #fecaca; border-color: rgba(239,68,68,.3);
+}
+
+/* Tendencias */
+.rpt-trends .rpt-list{
+  list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 8px;
+}
+.rpt-trends .dot{
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--brand); margin-right: 8px;
+}
+.rpt-actions{ display: flex; justify-content: flex-end; }
+
+/* Responsive */
+@media (max-width: 1200px){
+  .chart-card{ grid-column: span 6; }
+}
+@media (max-width: 768px){
+  .rpt-field{ grid-column: span 6; }
+  .rpt-field.wide{ grid-column: span 12; }
+  .chart-card{ grid-column: span 12; }
+}
+@media (max-width: 560px){
+  .rpt-field{ grid-column: span 12; }
+}

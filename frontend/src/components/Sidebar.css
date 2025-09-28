@@ -1,0 +1,39 @@
+:root{
+  --bg: #0b1020; --card: #0f172a; --line: #1f2937;
+  --fg: #e5e7eb; --muted: #94a3b8; --brand: #3b82f6;
+}
+
+/* CLASE ÚNICA para evitar choques con estilos viejos */
+.teacher-sidebar{
+  position: fixed !important;
+  inset: 0 auto 0 0;
+  width: 220px !important;
+  background: linear-gradient(180deg, var(--card), #0b1225);
+  border-right: 1px solid var(--line);
+  padding: 14px 12px;
+  color: var(--fg);
+  overflow-y: auto;
+  z-index: 40;
+}
+
+.teacher-sidebar .brand{
+  font-weight: 800; letter-spacing: .4px;
+  margin: 4px 6px 12px; color: var(--fg);
+}
+
+.teacher-sidebar .nav{ display: grid; gap: 6px; }
+.teacher-sidebar .nav-item{
+  display: block;
+  padding: 10px 12px;
+  color: var(--fg);
+  text-decoration: none;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  transition: background .15s, border-color .15s;
+}
+.teacher-sidebar .nav-item:hover{
+  background: #0f1a38; border-color: #2b3b55;
+}
+.teacher-sidebar .nav-item.active{
+  background: #0c1428; border-color: var(--line);
+}

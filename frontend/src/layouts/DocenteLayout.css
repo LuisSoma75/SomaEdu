@@ -1,0 +1,53 @@
+:root{
+  --bg: #0b1020;
+  --card: #0f172a;
+  --line: #1f2937;
+  --fg: #e5e7eb;
+  --muted: #94a3b8;
+  --brand: #3b82f6;
+}
+
+/* Fondo general del área docente */
+.teacher-page{
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100vh;
+}
+
+/* Deja espacio para la sidebar fija de 220px */
+.teacher-main{
+  margin-left: 220px !important;
+  min-height: 100vh;
+}
+
+/* Padding del wrapper donde van las pantallas */
+.panel-content{
+  padding: 18px;
+}
+
+/* ===== Overrides del Header para tema oscuro (docente) ===== */
+.teacher-main header,
+.teacher-main .header,
+.teacher-main .app-header,
+.teacher-main .main-header{
+  background: linear-gradient(180deg, var(--card), #0b1225) !important;
+  color: var(--fg) !important;
+  border-bottom: 1px solid var(--line);
+}
+
+.teacher-main header *,
+.teacher-main .header *,
+.teacher-main .app-header *,
+.teacher-main .main-header *{
+  color: var(--fg) !important;
+}
+
+.teacher-main .logout,
+.teacher-main .btn-logout{
+  color: #f87171 !important; /* “Cerrar sesión” */
+}
+
+/* Responsive básico: mantenemos la barra visible en móvil por ahora */
+@media (max-width: 768px){
+  .teacher-main{ margin-left: 220px !important; }
+}

@@ -1,0 +1,63 @@
+version: '3.9'
+
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    stdin_open: true
+    tty: true
+    depends_on:
+      - backend
+
+  backend:
+    build: ./backend/api
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend/api:/app
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/plataforma
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=rootpass
+      - MYSQL_DATABASE=plataforma
+    depends_on:
+      - mongo
+      - mysql
+      - ia
+
+  ia:
+    build: ./backend/ia
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/ia:/app
+    depends_on:
+      - mongo
+
+  mysql:
+    image: mysql:8
+    container_name: mysql
+    restart: always
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./database/mysql:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpass
+      - MYSQL_DATABASE=plataforma
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=rootpass
+
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./database/mongodb:/data/db

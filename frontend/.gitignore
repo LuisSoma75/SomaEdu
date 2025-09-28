@@ -1,0 +1,51 @@
+# ───────── OS ─────────
+.DS_Store
+Thumbs.db
+
+# ───────── Node general ─────────
+node_modules/
+*.tgz
+
+# ───────── Builds / bundles ─────────
+dist/
+dist-ssr/
+build/
+.cache/
+.temp/
+.tmp/
+**/.vite/           # caché de Vite dentro de node_modules/.vite
+
+# ───────── Logs ─────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ───────── Coverage / tests ─────────
+coverage/
+*.lcov
+test-results/
+playwright-report/
+
+# ───────── Editores / IDE ─────────
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ───────── Env / claves ─────────
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# ───────── Otros opcionales (borra si no usas) ─────────
+.turbo/
+.vercel/

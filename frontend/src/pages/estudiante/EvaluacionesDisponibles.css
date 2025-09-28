@@ -1,0 +1,40 @@
+/* Hereda tu estilo base (cards, table, btn, etc.) y ajusta detalles propios */
+
+.ev-table .t-title {
+  font-weight: 600;
+  color: #e6ecff;
+}
+.ev-table .t-sub {
+  font-size: 12px;
+}
+
+.inp {
+  background: #0f1729;
+  border: 1px solid #24304a;
+  color: #e6ecff;
+  padding: 10px 12px;
+  border-radius: 10px;
+  outline: none;
+  min-width: 260px;
+}
+.inp:focus {
+  border-color: #3b82f6;
+}
+
+.skeleton {
+  padding: 24px;
+  color: #9fb0d0;
+}
+.alert.warning {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 194, 57, 0.12);
+  border: 1px solid rgba(255, 194, 57, 0.25);
+  color: #ffd67a;
+}
+.empty {
+  padding: 24px;
+  text-align: center;
+  color: #9fb0d0;
+}

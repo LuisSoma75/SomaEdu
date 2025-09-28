@@ -1,0 +1,249 @@
+/* ====== Layout base ====== */
+.me-wrap {
+  padding: 32px;
+  color: #e8ecf5;
+}
+.me-header h1 {
+  font-size: 32px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+}
+.me-header p {
+  margin: 0;
+  color: #97a3b6;
+}
+
+/* ====== Cards / contenedores ====== */
+.me-card {
+  background: #0c1424;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 20px;
+  margin-top: 20px;
+}
+
+/* ====== Toolbar ====== */
+.me-toolbar { }
+.me-toolbar-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: end;
+}
+.me-toolbar-left { }
+.me-toolbar-right {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.me-label {
+  display: block;
+  font-size: 13px;
+  color: #97a3b6;
+  margin-bottom: 8px;
+}
+
+.me-search-select {
+  display: flex;
+  gap: 8px;
+}
+
+.me-input, .me-select {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: #0b1320;
+  color: #e8ecf5;
+  outline: none;
+  font-size: 14px;
+}
+.me-input:focus, .me-select:focus {
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.45);
+  border-color: rgba(59,130,246,0.45);
+}
+.me-select {
+  width: 260px;
+}
+
+.me-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #f6d78b;
+}
+
+/* ====== Botones ====== */
+.me-btn {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: transparent;
+  color: #e8ecf5;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.me-btn:hover { background: rgba(255,255,255,0.06); }
+.me-btn:disabled { opacity: .55; cursor: not-allowed; }
+.me-btn.sm { height: 30px; font-size: 13px; }
+
+.me-btn-primary {
+  background: #2563eb;
+  border-color: #1f4fd1;
+}
+.me-btn-primary:hover { background: #1e4ed8; }
+
+.me-btn-ghost {
+  background: transparent;
+}
+
+/* botón badge PIN dentro de meta */
+.me-btn-pin {
+  cursor: pointer;
+}
+
+/* ====== Meta (chips) ====== */
+.me-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.me-meta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.05);
+  font-size: 13px;
+}
+.me-meta-loading {
+  font-size: 12px;
+  color: #9aa8be;
+}
+
+/* ====== Pills de estado ====== */
+.me-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.1);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+.me-pill.rose { background: rgba(190,18,60,0.18); color:#ffcad3; border-color: rgba(190,18,60,0.35); }
+.me-pill.blue { background: rgba(30,64,175,0.18); color:#cfe1ff; border-color: rgba(30,64,175,0.35); }
+.me-pill.amber { background: rgba(180,83,9,0.18); color:#ffe2b8; border-color: rgba(180,83,9,0.35); }
+.me-pill.indigo { background: rgba(67,56,202,0.18); color:#d5d9ff; border-color: rgba(67,56,202,0.35); }
+.me-pill.emerald { background: rgba(6,95,70,0.18); color:#c9f6e8; border-color: rgba(6,95,70,0.35); }
+.me-pill.gray { background: rgba(107,114,128,0.18); color:#e3e5e9; border-color: rgba(107,114,128,0.35); }
+.me-pill.red { background: rgba(153,27,27,0.18); color:#ffd5d5; border-color: rgba(153,27,27,0.35); }
+.me-pill.default { background: rgba(255,255,255,0.06); color:#e8ecf5; }
+
+/* ====== Tarjetas de conteo ====== */
+.me-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+@media (min-width: 920px) {
+  .me-stats { grid-template-columns: repeat(4, minmax(0,1fr)); }
+}
+.me-stat {
+  background: #0b1320;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px;
+  padding: 12px;
+}
+.me-stat .title {
+  font-size: 12px;
+  color: #97a3b6;
+}
+.me-stat .value {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+/* ====== Tabla ====== */
+.me-table-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  color: #97a3b6;
+  font-size: 14px;
+}
+.me-muted { color: #9aa8be; font-size: 12px; }
+
+.me-table-wrap { overflow-x: auto; }
+.me-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.me-table thead th {
+  text-align: left;
+  padding: 12px 16px;
+  color: #9db0c9;
+  background: rgba(255,255,255,0.05);
+  font-weight: 600;
+}
+.me-table tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.me-table tbody tr:nth-child(even) td {
+  background: rgba(255,255,255,0.02);
+}
+
+.me-empty {
+  text-align: center;
+  color: #9aa8be;
+  padding: 26px 16px;
+}
+.me-empty-icon {
+  opacity: .7;
+  margin-right: 8px;
+}
+
+/* ====== Skeleton ====== */
+.sk {
+  background: rgba(255,255,255,0.1);
+  height: 12px;
+  border-radius: 6px;
+  animation: me-pulse 1.3s ease-in-out infinite;
+  width: 100px;
+}
+.sk.h6 { height: 20px; }
+.sk.h8 { height: 28px; }
+@keyframes me-pulse {
+  0% { opacity: .55; }
+  50% { opacity: .95; }
+  100% { opacity: .55; }
+}
+
+/* ====== Toast ====== */
+.me-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(15,23,42,0.8);
+  color: #e8ecf5;
+  font-size: 13px;
+  transition: opacity .3s ease;
+}

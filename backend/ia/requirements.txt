@@ -1,0 +1,7 @@
+sentence-transformers==2.7.0
+torch
+fastapi==0.111.0
+uvicorn==0.30.0
+pandas
+numpy
+psycopg2-binary
