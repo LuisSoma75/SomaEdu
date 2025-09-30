@@ -3,91 +3,125 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./Login.css";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:3001";
+/* ========= Base de API =========
+   Si VITE_API_URL ya termina en /api o /backend/api, lo respeta.
+   Si no, agrega /api por defecto.
+*/
+const API_BASE = (() => {
+  const env = (import.meta.env.VITE_API_URL || "http://localhost:3001/api").trim();
+  if (/\/(backend\/)?api\/?$/i.test(env)) return env.replace(/\/+$/, "");
+  return (env.replace(/\/+$/, "") + "/api").replace(/\/+$/, "");
+})();
+const api = (p = "") => `${API_BASE}/${String(p || "").replace(/^\/+/, "")}`;
 
 export default function Login() {
+  const navigate = useNavigate();
   const [correo, setCorreo] = useState("");
   const [contrasena, setContrasena] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
+  async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      const res = await fetch(`${API}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Enviamos ambas variantes por compatibilidad con el backend
-        body: JSON.stringify({ correo, contrasena, contraseña: contrasena }),
+      const LOGIN_PATH = "auth/login"; // ← coincide con App.js (/api/auth)
+      const url = api(LOGIN_PATH);
+
+      const payload = {
+        correo,
+        password: contrasena,   // clave estándar
+        contrasena: contrasena, // compat
+        contraseña: contrasena, // compat
+      };
+
+      // Logs de depuración (no imprime password real)
+      console.log("[LOGIN] POST", url);
+      console.log("[LOGIN] payload (safe):", {
+        ...payload,
+        password: "***",
+        contrasena: "***",
+        contraseña: "***",
       });
 
-      const data = await res.json();
-      const ok = (res.ok && (data.ok ?? data.success ?? true)) || false;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-      if (!ok) {
-        throw new Error(data?.message || data?.error || "Error de autenticación");
+      console.log("[LOGIN] status:", res.status);
+      const data = await res.json().catch(() => ({}));
+      console.log("[LOGIN] body:", data);
+
+      if (res.status === 404) {
+        setError("Usuario no encontrado");
+        return;
+      }
+      if (res.status === 401) {
+        setError("Contraseña incorrecta");
+        return;
+      }
+      if (!res.ok) {
+        setError(data?.message || data?.error || `Error ${res.status}`);
+        return;
       }
 
-      // El payload puede venir en data.data o directamente en data
-      const p = data.data ?? data;
+      // Acepta { ok:true, user:{...} } o retorna directo
+      const p = data.user ?? data.data ?? data;
 
-      // Normalizamos campos posibles
+      // Normalización de campos
       const idUsuario =
-        p.id_usuario ?? p.usuario?.id_usuario ?? p.user?.id_usuario ?? null;
+        p.id_usuario ?? p.usuario?.id_usuario ?? p.user?.id_usuario ?? p.id ?? null;
 
       const idEstudiante =
         p.id_estudiante ?? p.estudiante?.id_estudiante ?? null;
 
-      const role = p.id_rol ?? p.role ?? null;
+      const role = p.id_rol ?? p.role ?? p.rol ?? null;
 
       const nombre =
         p.nombre ??
         p.usuario?.Nombre ??
         p.user?.nombre ??
         p.displayName ??
-        "Estudiante";
+        "Usuario";
 
       const token = p.token ?? null;
 
-      // Guardamos un solo objeto "auth" (recomendado)
+      // Guarda auth unificado
       const auth = {
         idUsuario,
-        idEstudiante, // puede ser null si el login no lo devuelve
+        idEstudiante,
         role,
         nombre,
+        correo: p.correo ?? correo,
+        carne_estudiante: p.carne_estudiante ?? null,
+        id_grado: p.id_grado ?? null,
         token,
       };
       localStorage.setItem("auth", JSON.stringify(auth));
 
-      // (Opcional) Claves sueltas para código legado
+      // Compatibilidad con código legado
       localStorage.setItem("nombre", nombre);
       if (role != null) localStorage.setItem("rol", String(role));
       if (idUsuario != null) localStorage.setItem("id_usuario", String(idUsuario));
-      localStorage.setItem("correo", correo);
+      localStorage.setItem("correo", auth.correo || correo);
 
-      // Redirección según rol
-      if (role === 1) {
-        navigate("/admin", { replace: true });
-      } else if (role === 2) {
-        // Docente
-        navigate("/docente/monitoreo", { replace: true });
-      } else if (role === 3) {
-        // Estudiante
-        navigate("/estudiante", { replace: true });
-      } else {
-        setError("Rol de usuario no válido.");
-      }
+      // Redirección por rol (acepta number o string)
+      const r = String(role ?? "");
+      if (r === "1") navigate("/admin", { replace: true });
+      else if (r === "2") navigate("/docente/monitoreo", { replace: true });
+      else if (r === "3") navigate("/estudiante", { replace: true });
+      else setError("Rol de usuario no válido.");
     } catch (err) {
-      console.error("[LOGIN] error:", err);
+      console.error("[LOGIN] catch:", err);
       setError(err.message || "No se pudo iniciar sesión.");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
     <div className="login-bg">
