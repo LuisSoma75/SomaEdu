@@ -1,0 +1,195 @@
+/* ========= Sala de Espera – estilos ========= */
+
+/* Paleta y tokens */
+:root {
+  --bg-top: #070d1a;
+  --bg-bottom: #0b1e33;
+  --card-bg: rgba(255, 255, 255, 0.06);
+  --card-ring: rgba(255, 255, 255, 0.12);
+  --text: #ffffff;
+  --text-dim: rgba(255, 255, 255, 0.7);
+  --text-soft: rgba(255, 255, 255, 0.55);
+  --chip-bg: rgba(255, 255, 255, 0.1);
+  --chip-ring: rgba(255, 255, 255, 0.15);
+
+  --ok-bg: rgba(16, 185, 129, 0.16);   /* emerald */
+  --ok-ring: rgba(16, 185, 129, 0.32);
+  --warn-bg: rgba(245, 158, 11, 0.18); /* amber */
+  --warn-ring: rgba(245, 158, 11, 0.34);
+  --end-bg: rgba(244, 63, 94, 0.16);   /* rose */
+  --end-ring: rgba(244, 63, 94, 0.30);
+
+  --radius-xl: 24px;
+  --radius-lg: 18px;
+
+  --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --card-bg: rgba(17, 24, 39, 0.06);
+    --card-ring: rgba(17, 24, 39, 0.12);
+    --text: #0b1220;
+    --text-dim: rgba(11, 18, 32, 0.75);
+    --text-soft: rgba(11, 18, 32, 0.6);
+    --chip-bg: rgba(17, 24, 39, 0.08);
+    --chip-ring: rgba(17, 24, 39, 0.16);
+  }
+}
+
+/* Layout base */
+.waitroom {
+  min-height: 100vh;
+  color: var(--text);
+  background: linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+}
+
+.waitroom__container {
+  max-width: 1120px; /* ~ 5xl */
+  margin-inline: auto;
+  padding: 40px 24px;
+}
+
+/* Header */
+.waitroom__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.waitroom__title {
+  font-size: clamp(28px, 3vw, 40px);
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.waitroom__sessionlabel {
+  text-align: right;
+  line-height: 1.2;
+}
+.waitroom__sessionlabel small {
+  color: var(--text-soft);
+  display: block;
+  font-size: 12px;
+}
+.waitroom__sessionlabel b {
+  font-size: 18px;
+}
+
+/* Grid */
+.waitroom__grid {
+  margin-top: 24px;
+  display: grid;
+  gap: 20px;
+}
+@media (min-width: 768px) {
+  .waitroom__grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Card */
+.card {
+  background: var(--card-bg);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--card-ring);
+  padding: 24px;
+  backdrop-filter: blur(8px);
+}
+
+/* Texto */
+.muted {
+  color: var(--text-dim);
+}
+
+/* Badge de estado */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 999px;
+  border: 1px solid var(--chip-ring);
+  background: var(--chip-bg);
+}
+
+.badge--warn { background: var(--warn-bg); border-color: var(--warn-ring); }
+.badge--ok   { background: var(--ok-bg);   border-color: var(--ok-ring); }
+.badge--end  { background: var(--end-bg);  border-color: var(--end-ring); }
+
+.badge__dot {
+  position: relative;
+  width: 8px; height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.badge__dot::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 999px;
+  animation: ping 1.25s cubic-bezier(0, 0, 0.2, 1) infinite;
+  background: currentColor;
+  opacity: 0.35;
+}
+
+@keyframes ping {
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
+
+/* Stats */
+.stats {
+  margin-top: 18px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (min-width: 640px) {
+  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+.stat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-ring);
+}
+.stat__label { font-size: 13px; color: var(--text-soft); }
+.stat__value { font-size: 20px; font-weight: 700; }
+
+/* Panel info */
+.info {
+  margin-top: 22px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--card-ring);
+}
+.info p { margin: 4px 0; font-size: 13px; color: var(--text-dim); }
+
+/* Panel derecho */
+.section-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+.hr {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--card-ring);
+}
+.list {
+  margin: 12px 0 0 18px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.list li { margin: 6px 0; }
+
+/* Utilidades pequeñas */
+.mt-12 { margin-top: 12px; }
+.mt-20 { margin-top: 20px; }

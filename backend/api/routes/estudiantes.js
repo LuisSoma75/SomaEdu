@@ -1,6 +1,6 @@
 // backend/api/routes/estudiantes.js
 import express from "express";
-import db from "../utils/db.js"; // pool/query en ESM (export default)
+import db from "../utils/db.js";
 import bcrypt from "bcrypt";
 
 const router = express.Router();
@@ -9,12 +9,68 @@ const router = express.Router();
    Helpers
 =========================== */
 function required(body, keys) {
-  const missing = keys.filter(k => body[k] === undefined || body[k] === null || body[k] === "");
+  const missing = keys.filter(
+    (k) => body[k] === undefined || body[k] === null || body[k] === ""
+  );
   return { ok: missing.length === 0, missing };
 }
 function toInt(n) {
   const x = Number(n);
   return Number.isFinite(x) ? x : null;
+}
+
+/* =========================================================
+   Consulta base: sesiones disponibles para un id_grado
+   (¡OJO con c."Nombre" en vez de c.nombre!)
+========================================================= */
+async function listSesionesParaEstudiante(idGrado) {
+  const q = await db.query(
+    `
+    SELECT
+      se."id_sesion",
+      se."nombre"                        AS titulo,
+      se."estado",
+      se."creado_en",
+      se."iniciado_en",
+      se."finalizado_en",
+      se."tiempo_limite_seg",
+      se."num_preg_max",
+      se."modo_adaptativo",
+      se."pin",
+      c."id_clase",
+      c."id_grado",
+      COALESCE(c."Nombre",'—')           AS clase_nombre  -- FIX: columna con mayúscula
+    FROM "Sesion_evaluacion" se
+    JOIN "Clase" c
+      ON c."id_clase" = se."id_clase"
+    WHERE c."id_grado" = $1
+      AND se."estado" IN ('programada','en_espera')
+    ORDER BY se."creado_en" DESC
+    `,
+    [idGrado]
+  );
+
+  return q.rows.map((r) => {
+    let modalidad = "hasta_detener";
+    if (r.tiempo_limite_seg) modalidad = "tiempo";
+    else if (r.num_preg_max) modalidad = "num_preguntas";
+    return {
+      id_sesion: Number(r.id_sesion),
+      titulo: r.titulo,
+      estado: r.estado,
+      fecha: r.creado_en,
+      iniciado_en: r.iniciado_en,
+      finalizado_en: r.finalizado_en,
+      modalidad,
+      num_preg_max: r.num_preg_max,
+      tiempo_limite_seg: r.tiempo_limite_seg,
+      modo_adaptativo: r.modo_adaptativo,
+      pin: r.pin,
+      id_clase: r.id_clase,
+      id_grado: r.id_grado,
+      clase_nombre: r.clase_nombre,
+    };
+  });
 }
 
 /* ===========================
@@ -43,7 +99,9 @@ router.post("/", async (req, res) => {
   try {
     const { usuario, estudiante } = req.body || {};
     if (!usuario || !estudiante) {
-      return res.status(400).json({ ok: false, error: "faltan_bloques_usuario_estudiante" });
+      return res
+        .status(400)
+        .json({ ok: false, error: "faltan_bloques_usuario_estudiante" });
     }
 
     const {
@@ -60,11 +118,29 @@ router.post("/", async (req, res) => {
     const { carne_estudiante, id_grado } = estudiante;
 
     const v1 = required(
-      { nombre, correo, pwd, codigo_establecimiento, id_rol, carne_estudiante, id_grado },
-      ["nombre", "correo", "pwd", "codigo_establecimiento", "id_rol", "carne_estudiante", "id_grado"]
+      {
+        nombre,
+        correo,
+        pwd,
+        codigo_establecimiento,
+        id_rol,
+        carne_estudiante,
+        id_grado,
+      },
+      [
+        "nombre",
+        "correo",
+        "pwd",
+        "codigo_establecimiento",
+        "id_rol",
+        "carne_estudiante",
+        "id_grado",
+      ]
     );
     if (!v1.ok) {
-      return res.status(400).json({ ok: false, error: "campos_obligatorios", missing: v1.missing });
+      return res
+        .status(400)
+        .json({ ok: false, error: "campos_obligatorios", missing: v1.missing });
     }
 
     const correoNorm = String(correo).trim().toLowerCase();
@@ -111,7 +187,7 @@ router.post("/", async (req, res) => {
     );
     const id_usuario = ures.rows[0].id_usuario;
 
-    // Inserta Estudiante (carne_estudiante como PK/UK)
+    // Inserta Estudiante
     await client.query(
       `INSERT INTO "Estudiantes" (carne_estudiante, id_usuario, id_grado)
        VALUES ($1,$2,$3)`,
@@ -124,7 +200,9 @@ router.post("/", async (req, res) => {
     await client.query("ROLLBACK");
     console.error("POST /api/estudiantes error:", e);
     if (e.code === "23505") {
-      return res.status(409).json({ ok: false, error: "duplicado", detail: e.detail });
+      return res
+        .status(409)
+        .json({ ok: false, error: "duplicado", detail: e.detail });
     }
     return res.status(500).json({ ok: false, error: "server_error" });
   } finally {
@@ -134,12 +212,12 @@ router.post("/", async (req, res) => {
 
 /* =========================================
    GET /api/estudiantes/by-user/:id/resumen
-   Resumen por id_usuario (recomendado para el dashboard)
 ========================================= */
 router.get("/by-user/:id/resumen", async (req, res, next) => {
   try {
     const idUsuario = toInt(req.params.id);
-    if (!idUsuario) return res.status(400).json({ ok: false, error: "id_invalido" });
+    if (!idUsuario)
+      return res.status(400).json({ ok: false, error: "id_invalido" });
 
     const sql = `
       SELECT
@@ -154,7 +232,9 @@ router.get("/by-user/:id/resumen", async (req, res, next) => {
     `;
     const { rows } = await db.query(sql, [idUsuario]);
     if (!rows.length) {
-      return res.status(404).json({ ok: false, error: "estudiante_no_encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, error: "estudiante_no_encontrado" });
     }
 
     const r = rows[0];
@@ -164,7 +244,6 @@ router.get("/by-user/:id/resumen", async (req, res, next) => {
         carne_estudiante: r.carne_estudiante,
         nombre_completo: r.nombre_completo || "Estudiante",
         grado: r.grado || null,
-        // seccion: null // si luego agregas Seccion, aquí lo puedes exponer
       },
     });
   } catch (err) {
@@ -174,12 +253,12 @@ router.get("/by-user/:id/resumen", async (req, res, next) => {
 
 /* =========================================
    GET /api/estudiantes/by-user/:id/grado-simple
-   Solo el nombre del grado por id_usuario
 ========================================= */
 router.get("/by-user/:id/grado-simple", async (req, res, next) => {
   try {
     const idUsuario = toInt(req.params.id);
-    if (!idUsuario) return res.status(400).json({ ok: false, error: "id_invalido" });
+    if (!idUsuario)
+      return res.status(400).json({ ok: false, error: "id_invalido" });
 
     const sql = `
       SELECT g."Nombre" AS grado
@@ -197,12 +276,12 @@ router.get("/by-user/:id/grado-simple", async (req, res, next) => {
 
 /* =========================================
    GET /api/estudiantes/by-carne/:carne/resumen
-   Resumen por carné (si lo usas en enlaces directos)
 ========================================= */
 router.get("/by-carne/:carne/resumen", async (req, res, next) => {
   try {
     const carne = String(req.params.carne);
-    if (!carne) return res.status(400).json({ ok: false, error: "carne_invalido" });
+    if (!carne)
+      return res.status(400).json({ ok: false, error: "carne_invalido" });
 
     const sql = `
       SELECT
@@ -217,7 +296,9 @@ router.get("/by-carne/:carne/resumen", async (req, res, next) => {
     `;
     const { rows } = await db.query(sql, [carne]);
     if (!rows.length) {
-      return res.status(404).json({ ok: false, error: "estudiante_no_encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, error: "estudiante_no_encontrado" });
     }
 
     const r = rows[0];
@@ -236,12 +317,12 @@ router.get("/by-carne/:carne/resumen", async (req, res, next) => {
 
 /* =========================================
    GET /api/estudiantes/by-carne/:carne
-   Datos básicos por carné
 ========================================= */
 router.get("/by-carne/:carne", async (req, res, next) => {
   try {
     const carne = String(req.params.carne);
-    if (!carne) return res.status(400).json({ ok: false, error: "carne_invalido" });
+    if (!carne)
+      return res.status(400).json({ ok: false, error: "carne_invalido" });
 
     const sql = `
       SELECT
@@ -262,7 +343,9 @@ router.get("/by-carne/:carne", async (req, res, next) => {
     `;
     const { rows } = await db.query(sql, [carne]);
     if (!rows.length) {
-      return res.status(404).json({ ok: false, error: "estudiante_no_encontrado" });
+      return res
+        .status(404)
+        .json({ ok: false, error: "estudiante_no_encontrado" });
     }
 
     const r = rows[0];
@@ -283,6 +366,62 @@ router.get("/by-carne/:carne", async (req, res, next) => {
       },
     });
   } catch (err) {
+    next(err);
+  }
+});
+
+/* =========================================================
+   GET /api/estudiantes/:id/evaluaciones  (por id_estudiante)
+========================================================= */
+router.get("/:id/evaluaciones", async (req, res, next) => {
+  try {
+    const idEst = toInt(req.params.id);
+    if (!idEst || idEst <= 0) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "id_estudiante_invalido" });
+    }
+
+    const g = await db.query(
+      `SELECT e."id_grado" FROM "Estudiantes" e WHERE e."id_estudiante" = $1 LIMIT 1`,
+      [idEst]
+    );
+    const idGrado = g.rows[0]?.id_grado ?? null;
+    if (!idGrado) {
+      return res.status(404).json({ ok: false, error: "grado_no_encontrado" });
+    }
+
+    const items = await listSesionesParaEstudiante(idGrado);
+    res.json({ ok: true, items });
+  } catch (err) {
+    console.error("[GET /api/estudiantes/:id/evaluaciones]", err);
+    next(err);
+  }
+});
+
+/* =========================================================
+   GET /api/estudiantes/by-user/:id/evaluaciones  (por id_usuario)
+========================================================= */
+router.get("/by-user/:id/evaluaciones", async (req, res, next) => {
+  try {
+    const idUsuario = Number(req.params.id);
+    if (!Number.isFinite(idUsuario) || idUsuario <= 0) {
+      return res.status(400).json({ ok: false, error: "id_usuario_invalido" });
+    }
+
+    const g = await db.query(
+      `SELECT e."id_grado" FROM "Estudiantes" e WHERE e."id_usuario" = $1 LIMIT 1`,
+      [idUsuario]
+    );
+    const idGrado = g.rows[0]?.id_grado ?? null;
+    if (!idGrado) {
+      return res.status(404).json({ ok: false, error: "grado_no_encontrado" });
+    }
+
+    const items = await listSesionesParaEstudiante(idGrado);
+    res.json({ ok: true, items });
+  } catch (err) {
+    console.error("[GET /api/estudiantes/by-user/:id/evaluaciones]", err);
     next(err);
   }
 });

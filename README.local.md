@@ -1,2 +1,0 @@
-# SomaEdu
-G2

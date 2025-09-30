@@ -3,91 +3,94 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./Login.css";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:3001";
+/* ========= Base de API robusta =========
+   Lee VITE_API_URL. Si ya termina en /api o /backend/api lo respeta.
+   Si no, agrega /api por defecto.
+*/
+const API_BASE = (() => {
+  const env = (import.meta.env.VITE_API_URL || "http://localhost:3001/api").trim();
+  if (/\/(backend\/)?api\/?$/i.test(env)) {
+    return env.replace(/\/+$/, "");
+  }
+  return (env.replace(/\/+$/, "") + "/api").replace(/\/+$/, "");
+})();
+const api = (path = "") => `${API_BASE}/${String(path || "").replace(/^\/+/, "")}`;
 
 export default function Login() {
+  const navigate = useNavigate();
   const [correo, setCorreo] = useState("");
   const [contrasena, setContrasena] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
+  async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      const res = await fetch(`${API}/api/auth/login`, {
+      // IMPORTANTE: no agregues /api aquí; API_BASE YA lo incluye (/backend/api en tu caso)
+      const url = api("login"); // -> http://localhost:3001/backend/api/login
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // Enviamos ambas variantes por compatibilidad con el backend
         body: JSON.stringify({ correo, contrasena, contraseña: contrasena }),
       });
 
-      const data = await res.json();
-      const ok = (res.ok && (data.ok ?? data.success ?? true)) || false;
+      const data = await res.json().catch(() => ({}));
 
+      // Soporta {ok:true, user:{...}} o {success:true, ...}
+      const ok = (res.ok && (data.ok ?? data.success ?? false)) || false;
       if (!ok) {
-        throw new Error(data?.message || data?.error || "Error de autenticación");
+        const msg = data?.message || data?.error || `HTTP ${res.status}`;
+        throw new Error(msg);
       }
 
-      // El payload puede venir en data.data o directamente en data
-      const p = data.data ?? data;
+      const user = data.user ?? data.data ?? data;
 
-      // Normalizamos campos posibles
-      const idUsuario =
-        p.id_usuario ?? p.usuario?.id_usuario ?? p.user?.id_usuario ?? null;
-
-      const idEstudiante =
-        p.id_estudiante ?? p.estudiante?.id_estudiante ?? null;
-
-      const role = p.id_rol ?? p.role ?? null;
-
+      // Normaliza campos esperados por el resto del front
+      const idUsuario = user.id_usuario ?? user.idUsuario ?? null;
+      const idEstudiante = user.id_estudiante ?? user.idEstudiante ?? null;
+      const role = user.role ?? user.id_rol ?? null;
       const nombre =
-        p.nombre ??
-        p.usuario?.Nombre ??
-        p.user?.nombre ??
-        p.displayName ??
-        "Estudiante";
+        user.nombre ??
+        user.usuario?.Nombre ??
+        user.user?.nombre ??
+        "Usuario";
+      const token = user.token ?? null;
 
-      const token = p.token ?? null;
-
-      // Guardamos un solo objeto "auth" (recomendado)
       const auth = {
         idUsuario,
-        idEstudiante, // puede ser null si el login no lo devuelve
+        idEstudiante,
         role,
         nombre,
+        correo: user.correo ?? correo,
+        carne_estudiante: user.carne_estudiante ?? null,
+        id_grado: user.id_grado ?? null,
         token,
       };
       localStorage.setItem("auth", JSON.stringify(auth));
 
-      // (Opcional) Claves sueltas para código legado
+      // Compatibilidad con código legado (si algo del front aún lee estas claves)
       localStorage.setItem("nombre", nombre);
       if (role != null) localStorage.setItem("rol", String(role));
       if (idUsuario != null) localStorage.setItem("id_usuario", String(idUsuario));
-      localStorage.setItem("correo", correo);
+      localStorage.setItem("correo", auth.correo || correo);
 
-      // Redirección según rol
-      if (role === 1) {
-        navigate("/admin", { replace: true });
-      } else if (role === 2) {
-        // Docente
-        navigate("/docente/monitoreo", { replace: true });
-      } else if (role === 3) {
-        // Estudiante
-        navigate("/estudiante", { replace: true });
-      } else {
-        setError("Rol de usuario no válido.");
-      }
+      // Redirección según rol (acepta number o string)
+      const r = String(role ?? "");
+      if (r === "1") navigate("/admin", { replace: true });
+      else if (r === "2") navigate("/docente", { replace: true });
+      else if (r === "3") navigate("/estudiante", { replace: true });
+      else setError("Rol de usuario no válido.");
     } catch (err) {
       console.error("[LOGIN] error:", err);
       setError(err.message || "No se pudo iniciar sesión.");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
     <div className="login-bg">

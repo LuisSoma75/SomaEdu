@@ -1,4 +1,4 @@
-// src/utils/App.jsx  (mueve este archivo si tu App.jsx vive en otra carpeta)
+// src/App.jsx   (mueve/renombra desde src/utils/App.jsx si aplica)
 import React from "react";
 import {
   BrowserRouter as Router,
@@ -6,9 +6,9 @@ import {
   Route,
   Navigate,
   useParams,
-  useNavigate,
 } from "react-router-dom";
 
+/* ============ PÁGINAS ============ */
 // AUTH / ADMIN
 import Login from "./pages/auth/Login";
 import AdminDashboard from "./pages/admin/AdminDashboard";
@@ -37,7 +37,7 @@ const getAuth = () => {
     const p = JSON.parse(raw);
     return {
       idUsuario: p.idUsuario ?? p.id ?? p.id_usuario ?? null,
-      role: p.role ?? p.rol ?? null, // 1=admin, 2=docente, 3=estudiante (ajusta a tu esquema)
+      role: p.role ?? p.rol ?? null, // 1=admin, 2=docente, 3=estudiante
       token: p.token ?? null,
     };
   } catch {
@@ -64,33 +64,20 @@ const AdminGuard = ({ children }) => {
 };
 
 /* =========================
-   Wrappers para salas
+   Wrapper para sala del docente (usa id numérico)
 ========================= */
-// Sala de espera estudiante
-const StudentWaitroomRoute = () => {
-  const { sessionId } = useParams();
-  const navigate = useNavigate();
-  const { idUsuario, role } = getAuth();
-  if (!idUsuario || String(role) !== "3") return <Navigate to="/" replace />;
-  const sid = Number(sessionId);
-  return (
-    <SalaDeEspera
-      sessionId={sid}
-      idEstudiante={idUsuario}
-      onStart={() => navigate(`/estudiante/resolver/${sid}`)}
-    />
-  );
-};
-
-// Sala de espera docente
 const DocenteWaitroomRoute = () => {
   const { sessionId } = useParams();
   const { idUsuario, role } = getAuth();
   if (!idUsuario || String(role) !== "2") return <Navigate to="/" replace />;
   const sid = Number(sessionId);
+  if (!Number.isFinite(sid) || sid <= 0) return <Navigate to="/docente" replace />;
   return <SalaDeEsperaDocente sessionId={sid} idDocente={idUsuario} />;
 };
 
+/* =========================
+   APP
+========================= */
 function App() {
   return (
     <Router>
@@ -98,7 +85,7 @@ function App() {
         {/* Público / auth */}
         <Route path="/" element={<Login />} />
 
-        {/* Admin (si aplica) */}
+        {/* Admin */}
         <Route
           path="/admin"
           element={
@@ -108,7 +95,7 @@ function App() {
           }
         />
 
-        {/* DOCENTE: layout + rutas hijas SIEMPRE bajo /docente */}
+        {/* DOCENTE: layout + rutas hijas bajo /docente */}
         <Route
           path="/docente"
           element={
@@ -124,10 +111,10 @@ function App() {
           <Route path="reportes" element={<ReportesDocente />} />
         </Route>
 
-        {/* Sala de espera del docente (sesión específica) */}
+        {/* Sala de espera del docente (sesión específica, numérica) */}
         <Route path="/docente/sala/:sessionId" element={<DocenteWaitroomRoute />} />
 
-        {/* ESTUDIANTE (SIEMPRE bajo /estudiante) */}
+        {/* ESTUDIANTE */}
         <Route
           path="/estudiante"
           element={
@@ -152,7 +139,18 @@ function App() {
             </EstudianteGuard>
           }
         />
-        <Route path="/estudiante/sala/:sessionId" element={<StudentWaitroomRoute />} />
+
+        {/* Sala de espera del estudiante
+            Usamos :sidOrCode para permitir tanto ID numérico como código (ej. ev1).
+            El propio componente SalaDeEspera resuelve el ID internamente y maneja redirección al iniciar. */}
+        <Route
+          path="/estudiante/sala/:sidOrCode"
+          element={
+            <EstudianteGuard>
+              <SalaDeEspera />
+            </EstudianteGuard>
+          }
+        />
 
         {/* Fallback a login */}
         <Route path="*" element={<Navigate to="/" replace />} />

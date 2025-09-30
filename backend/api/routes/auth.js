@@ -1,63 +1,71 @@
+// backend/api/routes/auth.js
 import express from "express";
-import pool from "../utils/db.js"; // Cambia la ruta si está en otro lugar
-import bcrypt from "bcryptjs";
+import db from "../utils/db.js";
+import bcrypt from "bcryptjs"; // o "bcrypt" si así lo tienes instalado
 
 const router = express.Router();
 
+/**
+ * POST /login
+ * Body: { correo, contrasena | contraseña }
+ */
 router.post("/login", async (req, res) => {
-  // 1. Imprime el body recibido
-  console.log("🟡 [LOGIN] Body recibido:", req.body);
-
-  const { correo, contraseña } = req.body;
-  if (!correo || !contraseña) {
-    console.log("🔴 [LOGIN] Falta correo o contraseña");
-    return res.json({ success: false, message: "Correo y contraseña son obligatorios" });
-  }
-
   try {
-    // 2. Imprime la consulta que se hará
-    console.log('🔵 [LOGIN] Consultando usuario en BD...');
-    // OJO: Asegúrate que el nombre de la tabla y columna sean EXACTOS ("Usuarios" y correo)
-    const result = await pool.query('SELECT * FROM "Usuarios" WHERE correo = $1', [correo]);
-    console.log("🟣 [LOGIN] Resultado SQL:", result.rows);
-
-    if (result.rows.length === 0) {
-      console.log("🔴 [LOGIN] Usuario no encontrado");
-      return res.json({ success: false, message: "Usuario no encontrado" });
+    const { correo, contrasena, contraseña } = req.body || {};
+    const pwd = contrasena ?? contraseña;
+    if (!correo || !pwd) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "missing_fields", message: "Correo y contraseña son obligatorios." });
     }
 
-    const usuario = result.rows[0];
-    // 3. Imprime para depurar contraseña (NO imprimas hashes reales en producción)
-    console.log("🟢 [LOGIN] Verificando contraseña...");
-    console.log("Contraseña recibida:", contraseña);
-    console.log("Hash en base:", usuario.contraseña);
+    // 1) Busca usuario por correo
+    const u = await db.query(
+      `SELECT u.id_usuario, u."Nombre" AS nombre, u.correo, u.contraseña AS hash, u.id_rol
+         FROM "Usuarios" u
+        WHERE LOWER(u.correo) = LOWER($1)
+        LIMIT 1`,
+      [correo]
+    );
+    if (u.rowCount === 0) {
+      return res.status(404).json({ ok: false, error: "not_found", message: "Usuario no encontrado." });
+    }
+    const user = u.rows[0];
 
-    const passwordOk = await bcrypt.compare(contraseña, usuario.contraseña);
-
-    if (!passwordOk) {
-      console.log("🔴 [LOGIN] Contraseña incorrecta");
-      return res.json({ success: false, message: "Contraseña incorrecta" });
+    // 2) Verifica contraseña
+    const ok = await bcrypt.compare(pwd, user.hash);
+    if (!ok) {
+      return res.status(401).json({ ok: false, error: "bad_credentials", message: "Contraseña incorrecta." });
     }
 
-    // 4. Si todo va bien, imprime el rol y devuelve también el nombre y el id de usuario
-    console.log("✅ [LOGIN] Login correcto. id_rol:", usuario.id_rol);
+    // 3) Trae datos de Estudiantes (si aplica)
+    const e = await db.query(
+      `SELECT e.carne_estudiante, e.id_grado, g."Nombre" AS grado_nombre
+         FROM "Estudiantes" e
+    LEFT JOIN "Grado" g ON g."id_grado" = e."id_grado"
+        WHERE e.id_usuario = $1
+        LIMIT 1`,
+      [user.id_usuario]
+    );
+    const est = e.rows[0] || null;
 
-    console.log("RESPUESTA DE LOGIN:", {
-  nombre: usuario.Nombre,
-  // otros campos...
-});
-
-    res.json({
-      success: true,
-      id_rol: usuario.id_rol,
-      id_usuario: usuario.id_usuario,     // Por si necesitas el id del usuario
-      nombre: usuario.Nombre,             // Devuelve el nombre exacto para mostrarlo en frontend
-      correo: usuario.correo              // (Opcional) Devuelve el correo si lo quieres guardar también
+    // 4) Respuesta normalizada (sin id_estudiante)
+    return res.json({
+      ok: true,
+      user: {
+        id_usuario: Number(user.id_usuario),
+        id_rol: Number(user.id_rol),
+        nombre: user.nombre,
+        correo: user.correo,
+        // datos de estudiante si existen
+        carne_estudiante: est?.carne_estudiante ?? null,
+        id_grado: est?.id_grado != null ? Number(est.id_grado) : null,
+        grado_nombre: est?.grado_nombre ?? null,
+      },
     });
-  } catch (error) {
-    // 5. Error inesperado
-    console.error("❌ [LOGIN] Error inesperado:", error);
-    res.status(500).json({ success: false, message: "Error interno del servidor" });
+  } catch (err) {
+    console.error("[LOGIN] error:", err);
+    return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 

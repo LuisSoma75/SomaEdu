@@ -4,18 +4,37 @@ import { useNavigate } from "react-router-dom";
 import StudentSidebar from "../../components/StudentSidebar";
 import "./EvaluacionesDisponibles.css";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:3001";
+/* ===========================
+   Base de API robusta
+   - Lee VITE_API_URL si existe
+   - Si no termina en /backend/api, lo agrega
+=========================== */
+const API_BASE = (() => {
+  const env = (import.meta.env.VITE_API_URL || "http://localhost:3001/backend/api").trim();
+  // Si no incluye /backend/api al final, lo añadimos
+  const withBackendApi = /\/backend\/api\/?$/i.test(env)
+    ? env
+    : env.replace(/\/+$/, "") + "/backend/api";
+  return withBackendApi.replace(/\/+$/, "");
+})();
+const api = (path = "") => `${API_BASE}/${String(path || "").replace(/^\/+/, "")}`;
 
 export default function EvaluacionesDisponibles() {
   const navigate = useNavigate();
 
   // -------- auth ----------
   const auth = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem("auth") || "{}"); }
-    catch { return {}; }
+    try {
+      return JSON.parse(localStorage.getItem("auth") || "{}");
+    } catch {
+      return {};
+    }
   }, []);
-  const idUsuario = auth.id_usuario ?? auth.idUsuario ?? auth.userId ?? null;
-  const carne = auth.carne_estudiante ?? auth.carne ?? null;
+
+  const idUsuario =
+    auth.id_usuario ?? auth.idUsuario ?? auth.userId ?? null;
+  const idEstudiante =
+    auth.id_estudiante ?? auth.idEstudiante ?? null;
 
   // -------- estado UI ----------
   const [loading, setLoading] = useState(true);
@@ -23,11 +42,10 @@ export default function EvaluacionesDisponibles() {
   const [filtro, setFiltro] = useState("");
   const [items, setItems] = useState([]);
 
-  // -------- handlers ----------
+  // -------- acciones ----------
   const handleLogout = () => {
     try {
       localStorage.removeItem("auth");
-      // limpiar llaves antiguas por compatibilidad
       localStorage.removeItem("nombre");
       localStorage.removeItem("rol");
       localStorage.removeItem("id_usuario");
@@ -38,76 +56,82 @@ export default function EvaluacionesDisponibles() {
     }
   };
 
-  const goToSala = (idSesion) => navigate(`/estudiante/sala/${idSesion}`);
+  const goToSala = (it) => {
+    const param = it.pin ? it.pin : it.id_sesion;
+    navigate(`/estudiante/sala/${param}`);
+  };
 
-  // -------- carga desde API (con fallback) ----------
+  // -------- carga desde API ----------
   useEffect(() => {
     let cancel = false;
-    (async () => {
+
+    async function load() {
       setLoading(true);
       setError("");
+      setItems([]);
 
-      const endpoints = [
-        `${API}/api/estudiante/evaluaciones?userId=${idUsuario ?? ""}`,
-        `${API}/api/estudiante/evaluaciones?carne=${encodeURIComponent(carne ?? "")}`,
-        `${API}/api/sesiones/disponibles?userId=${idUsuario ?? ""}`,
-      ].filter(Boolean);
+      // Elegimos endpoint según lo disponible en auth
+      let url = idEstudiante
+        ? api(`estudiantes/${idEstudiante}/evaluaciones`)
+        : idUsuario
+        ? api(`estudiantes/by-user/${idUsuario}/evaluaciones`)
+        : null;
 
-      let ok = false;
-      for (const url of endpoints) {
-        try {
-          const r = await fetch(url, { headers: { "Content-Type": "application/json" } });
-          if (!r.ok) continue;
-          const j = await r.json();
-
-          const raw = j.items ?? j.data ?? j ?? [];
-          const norm = (Array.isArray(raw) ? raw : []).map((x) => ({
-            id: x.id ?? x.id_sesion ?? x.sessionId ?? x.sesion_id ?? null,
-            titulo: x.titulo ?? x.nombre ?? "Evaluación",
-            grado: x.grado ?? x.grado_nombre ?? null,
-            materia: x.materia ?? x.materia_nombre ?? null,
-            fecha: x.fecha ?? x.creado_en ?? null,
-            estado: x.estado ?? "Disponible",
-            modalidad:
-              x.modalidad ??
-              (x.tiempo_limite_seg ? "Tiempo" : (x.num_preg_max ? "# Preguntas" : "Hasta detener")),
-            minutos: x.minutos ?? (x.tiempo_limite_seg ? Math.round(Number(x.tiempo_limite_seg) / 60) : null),
-            num_preguntas: x.num_preguntas ?? (x.num_preg_max ?? null),
-            docente: x.docente ?? x.docente_nombre ?? null,
-          })).filter(e => e.id != null);
-
-          if (!cancel) setItems(norm);
-          ok = true;
-          break;
-        } catch (_) {}
+      if (!url) {
+        setError("No se encontró el identificador del estudiante.");
+        setLoading(false);
+        return;
       }
 
-      if (!ok && !cancel) {
-        setItems([
-          {
-            id: 101,
-            titulo: "Adaptativa CNB",
-            grado: null,
-            materia: null,
-            fecha: null,
-            estado: "Disponible",
-            modalidad: "Hasta detener",
-            minutos: null,
-            docente: null,
-          }
-        ]);
-        setError("No se pudo cargar desde la API; mostrando ejemplo.");
+      try {
+        // Útil para depurar
+        console.log("[API_BASE]", API_BASE);
+        console.log("[GET]", url);
+
+        const r = await fetch(url, { headers: { "Content-Type": "application/json" } });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const msg = j?.error || `HTTP ${r.status}`;
+          throw new Error(msg);
+        }
+
+        const arr = Array.isArray(j.items) ? j.items : [];
+        const norm = arr.map((x) => ({
+          id_sesion: x.id_sesion ?? x.id ?? null,
+          titulo: x.titulo ?? x.nombre ?? "Evaluación",
+          grado: x.id_grado ?? x.grado ?? x.grado_nombre ?? x.clase_nombre ?? null,
+          materia: x.materia ?? x.materia_nombre ?? null,
+          fecha: x.fecha ?? x.creado_en ?? null,
+          estado: x.estado ?? "Disponible",
+          modalidad:
+            x.modalidad ??
+            (x.tiempo_limite_seg ? "tiempo" : x.num_preg_max ? "num_preguntas" : "hasta_detener"),
+          minutos: x.tiempo_limite_seg ? Math.round(Number(x.tiempo_limite_seg) / 60) : null,
+          num_preguntas: x.num_preg_max ?? null,
+          pin: x.pin ?? null,
+          clase_nombre: x.clase_nombre ?? null,
+        })).filter(e => e.id_sesion != null);
+
+        if (!cancel) setItems(norm);
+      } catch (e) {
+        console.error("[Evaluaciones] Error:", e);
+        if (!cancel) setError("No se pudieron cargar las evaluaciones desde la API.");
+      } finally {
+        if (!cancel) setLoading(false);
       }
-      if (!cancel) setLoading(false);
-    })();
-    return () => { cancel = true; };
-  }, [API, idUsuario, carne]);
+    }
+
+    load();
+    return () => {
+      cancel = true;
+    };
+  }, [idUsuario, idEstudiante]); // API_BASE es constante; no recargar por eso
 
   const list = useMemo(() => {
     const q = filtro.trim().toLowerCase();
     if (!q) return items;
     return items.filter((x) =>
-      [x.titulo, x.grado, x.materia, x.docente]
+      [x.titulo, x.grado, x.materia, x.clase_nombre]
         .filter(Boolean)
         .some((s) => String(s).toLowerCase().includes(q))
     );
@@ -143,7 +167,7 @@ export default function EvaluacionesDisponibles() {
               {error && <div className="alert warning">{error}</div>}
 
               {list.length === 0 ? (
-                <div className="empty">No hay evaluaciones disponibles por ahora.</div>
+                <div className="empty">No hay evaluaciones disponibles para tu grado.</div>
               ) : (
                 <table className="table ev-table">
                   <thead>
@@ -159,22 +183,29 @@ export default function EvaluacionesDisponibles() {
                   </thead>
                   <tbody>
                     {list.map((e) => (
-                      <tr key={e.id}>
+                      <tr key={e.id_sesion}>
                         <td>
                           <div className="t-title">{e.titulo}</div>
-                          {e.docente && <div className="muted t-sub">Docente: {e.docente}</div>}
+                          <div className="muted t-sub">
+                            {e.clase_nombre ? `Clase: ${e.clase_nombre} • ` : ""}
+                            PIN: {e.pin ?? "—"}
+                          </div>
                         </td>
                         <td>{e.grado ?? "—"}</td>
                         <td>{e.materia ?? "—"}</td>
                         <td className="muted">
-                          {e.modalidad}
-                          {e.minutos ? ` • ${e.minutos} min` : ""}
-                          {e.num_preguntas ? ` • ${e.num_preguntas} preguntas` : ""}
+                          {e.modalidad === "tiempo"
+                            ? `Tiempo${e.minutos ? ` • ${e.minutos} min` : ""}`
+                            : e.modalidad === "num_preguntas"
+                            ? `${e.num_preguntas ?? "N"} preguntas`
+                            : "Hasta detener"}
                         </td>
                         <td>{e.fecha ? String(e.fecha).slice(0, 10) : "—"}</td>
-                        <td><span className={`pill ${String(e.estado).toLowerCase()}`}>{e.estado}</span></td>
+                        <td>
+                          <span className={`pill ${String(e.estado).toLowerCase()}`}>{e.estado}</span>
+                        </td>
                         <td className="t-right">
-                          <button className="btn primary sm" onClick={() => goToSala(e.id)}>
+                          <button className="btn primary sm" onClick={() => goToSala(e)}>
                             Entrar a sala
                           </button>
                         </td>
