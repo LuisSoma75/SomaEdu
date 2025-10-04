@@ -3,7 +3,27 @@ import React, { useEffect, useMemo, useState } from "react";
 import "./MonitoreoEvaluacion.css";
 import { socket } from "../../services/socket";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:3001";
+/* ========= Base de API robusta =========
+   - Si VITE_API_URL ya termina en /api o /backend/api lo respeta
+   - Si no, agrega /api por defecto
+   - api(path) limpia "/" inicial y un "api/" accidental para evitar /api/api
+*/
+const API_BASE = (() => {
+  const raw = (import.meta.env.VITE_API_URL || "http://localhost:3001/api")
+    .trim()
+    .replace(/\/+$/, "");
+  if (/\/(backend\/)?api$/i.test(raw)) return raw; // ya incluye /api
+  return `${raw}/api`;
+})();
+
+const api = (p = "") =>
+  `${API_BASE}/${String(p || "")
+    .replace(/^\/+/, "")        // quita "/" iniciales
+    .replace(/^api\/+/i, "")}`; // evita api/api
+
+const authHeaders = (token) => ({
+  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+});
 
 export default function MonitoreoEvaluacion() {
   // ---------- Auth básico ----------
@@ -11,6 +31,8 @@ export default function MonitoreoEvaluacion() {
     try { return JSON.parse(localStorage.getItem("auth") || "{}"); }
     catch { return {}; }
   }, []);
+
+  const token = auth?.token || localStorage.getItem("token") || "";
   const idDocente = auth.idDocente ?? auth.idUsuario ?? 0;
 
   // ---------- Estado ----------
@@ -42,8 +64,10 @@ export default function MonitoreoEvaluacion() {
   // ---------- REST ----------
   const fetchEvaluaciones = async () => {
     const estados = encodeURIComponent("programada,en_espera,activa,finalizada");
-    const r = await fetch(`${API}/api/docente/evaluaciones?estado=${estados}`);
-    const j = await r.json();
+    const r = await fetch(api(`docente/evaluaciones?estado=${estados}`), {
+      headers: authHeaders(token),
+    });
+    const j = await r.json().catch(() => ({}));
     if (Array.isArray(j)) return j;
     if (j?.ok && Array.isArray(j.data)) return j.data;
     if (j?.ok && Array.isArray(j.items)) return j.items;
@@ -51,23 +75,30 @@ export default function MonitoreoEvaluacion() {
   };
 
   const fetchState = async (sid) => {
-    const r = await fetch(`${API}/api/waitroom/${sid}/state`);
-    const j = await r.json();
+    const r = await fetch(api(`waitroom/${sid}/state`), {
+      headers: authHeaders(token),
+    });
+    const j = await r.json().catch(() => ({}));
     if (!j.ok) throw new Error(j.error || "state_failed");
     return j;
   };
 
   const fetchParticipants = async (sid) => {
-    const r = await fetch(`${API}/api/waitroom/${sid}/participants`);
+    const r = await fetch(api(`waitroom/${sid}/participants`), {
+      headers: authHeaders(token),
+    });
     if (r.status === 404) return [];
-    const j = await r.json();
+    const j = await r.json().catch(() => ({}));
     if (!j.ok) throw new Error(j.error || "participants_failed");
     return j.items || [];
   };
 
   const startSesion = async (sid) => {
-    const r = await fetch(`${API}/api/waitroom/${sid}/start`, { method: "POST" });
-    const j = await r.json();
+    const r = await fetch(api(`waitroom/${sid}/start`), {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    const j = await r.json().catch(() => ({}));
     if (!j.ok) throw new Error(j.error || "start_failed");
   };
 
@@ -77,21 +108,23 @@ export default function MonitoreoEvaluacion() {
       try {
         setLoadingEvals(true);
         const list = await fetchEvaluaciones();
-        const norm = list.map(e => ({
-          id_sesion: e.id_sesion ?? e.id ?? null,
-          nombre: e.nombre ?? (e.id_sesion ? `Sesión ${e.id_sesion}` : "Sesión"),
-          estado: e.estado ?? "programada",
-          pin: e.pin ?? null,
-          grado_nombre: e.grado_nombre ?? null,
-          materia_nombre: e.materia_nombre ?? null,
-        })).filter(e => e.id_sesion);
+        const norm = list
+          .map((e) => ({
+            id_sesion: e.id_sesion ?? e.id ?? null,
+            nombre: e.nombre ?? (e.id_sesion ? `Sesión ${e.id_sesion}` : "Sesión"),
+            estado: e.estado ?? "programada",
+            pin: e.pin ?? null,
+            grado_nombre: e.grado_nombre ?? null,
+            materia_nombre: e.materia_nombre ?? null,
+          }))
+          .filter((e) => e.id_sesion);
 
         setEvaluaciones(norm);
 
         const prefer =
-          norm.find(e => e.estado === "en_espera") ||
-          norm.find(e => e.estado === "activa") ||
-          norm.find(e => e.estado === "programada") ||
+          norm.find((e) => e.estado === "en_espera") ||
+          norm.find((e) => e.estado === "activa") ||
+          norm.find((e) => e.estado === "programada") ||
           norm[0];
 
         if (prefer?.id_sesion) {
@@ -110,6 +143,7 @@ export default function MonitoreoEvaluacion() {
         setLoadingEvals(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---------- Cargar estado de la sesión ----------
@@ -127,7 +161,7 @@ export default function MonitoreoEvaluacion() {
         setBusyState(true);
         const s = await fetchState(selectedSesionId);
         setCounts(s.participantes || {});
-        setMeta(prev => ({ ...prev, estado: s.estado }));
+        setMeta((prev) => ({ ...prev, estado: s.estado }));
       } catch (e) {
         console.error(e);
       } finally {
@@ -144,9 +178,9 @@ export default function MonitoreoEvaluacion() {
         setLoadingTable(false);
       }
 
-      const info = evaluaciones.find(x => x.id_sesion === selectedSesionId);
+      const info = evaluaciones.find((x) => x.id_sesion === selectedSesionId);
       if (info) {
-        setMeta(prev => ({
+        setMeta((prev) => ({
           ...prev,
           nombre: info.nombre,
           pin: info.pin ?? prev.pin,
@@ -155,6 +189,7 @@ export default function MonitoreoEvaluacion() {
         }));
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSesionId, idDocente]);
 
   // ---------- RT ----------
@@ -163,13 +198,13 @@ export default function MonitoreoEvaluacion() {
       const sid = Number(data?.id_sesion ?? data?.sessionId);
       if (sid !== Number(selectedSesionId)) return;
       setCounts(data.participantes || {});
-      setMeta(prev => ({ ...prev, estado: data.estado }));
+      setMeta((prev) => ({ ...prev, estado: data.estado }));
     };
 
     const onStarted = (data) => {
       const sid = Number(data?.id_sesion ?? data?.sessionId);
       if (sid !== Number(selectedSesionId)) return;
-      setMeta(prev => ({ ...prev, estado: "activa" }));
+      setMeta((prev) => ({ ...prev, estado: "activa" }));
     };
 
     socket.on("waitroom:state", onState);
@@ -184,7 +219,7 @@ export default function MonitoreoEvaluacion() {
   const filtered = useMemo(() => {
     const t = filterText.trim().toLowerCase();
     if (!t) return evaluaciones;
-    return evaluaciones.filter(e =>
+    return evaluaciones.filter((e) =>
       (e.nombre ?? "").toLowerCase().includes(t) ||
       String(e.id_sesion).includes(t) ||
       (e.estado ?? "").toLowerCase().includes(t)
@@ -197,7 +232,11 @@ export default function MonitoreoEvaluacion() {
     try {
       setStarting(true);
       await startSesion(selectedSesionId);
-      socket.emit("start-session", { sessionId: Number(selectedSesionId), userId: idDocente, role: "docente" });
+      socket.emit("start-session", {
+        sessionId: Number(selectedSesionId),
+        userId: idDocente,
+        role: "docente",
+      });
     } catch (e) {
       console.error(e);
       alert("No se pudo iniciar la evaluación seleccionada.");
@@ -242,8 +281,10 @@ export default function MonitoreoEvaluacion() {
                 onChange={(e) => setSelectedSesionId(Number(e.target.value))}
                 className="me-select"
               >
-                <option value="" disabled>{loadingEvals ? "Cargando…" : "Selecciona una evaluación…"}</option>
-                {filtered.map(ev => (
+                <option value="" disabled>
+                  {loadingEvals ? "Cargando…" : "Selecciona una evaluación…"}
+                </option>
+                {filtered.map((ev) => (
                   <option key={ev.id_sesion} value={ev.id_sesion}>
                     {ev.nombre} — {ev.estado}
                   </option>
@@ -251,7 +292,9 @@ export default function MonitoreoEvaluacion() {
               </select>
             </div>
             {!loadingEvals && !evaluaciones.length && (
-              <div className="me-hint">No hay evaluaciones. Crea una desde “Evaluaciones”.</div>
+              <div className="me-hint">
+                No hay evaluaciones. Crea una desde “Evaluaciones”.
+              </div>
             )}
           </div>
 
@@ -262,7 +305,11 @@ export default function MonitoreoEvaluacion() {
               className="me-btn me-btn-primary"
               title={!selectedSesionId ? "Selecciona una evaluación" : ""}
             >
-              {meta.estado === "activa" ? "Sesión activa" : (starting ? "Iniciando…" : "Iniciar evaluación")}
+              {meta.estado === "activa"
+                ? "Sesión activa"
+                : starting
+                ? "Iniciando…"
+                : "Iniciar evaluación"}
             </button>
             <button
               onClick={() => window.alert("Próximamente: historial")}
@@ -278,13 +325,19 @@ export default function MonitoreoEvaluacion() {
           <span className="me-meta-badge">{meta.nombre ?? "—"}</span>
           <StatusPill estado={meta.estado} />
           {meta.pin && (
-            <button className="me-meta-badge me-btn-pin" onClick={copyPin} title="Copiar PIN">
+            <button
+              className="me-meta-badge me-btn-pin"
+              onClick={copyPin}
+              title="Copiar PIN"
+            >
               PIN: <b>{meta.pin}</b>
             </button>
           )}
           {(meta.grado_nombre || meta.materia_nombre) && (
             <span className="me-meta-badge">
-              {meta.grado_nombre ? `${meta.grado_nombre}` : ""}{meta.grado_nombre && meta.materia_nombre ? " • " : ""}{meta.materia_nombre ? `${meta.materia_nombre}` : ""}
+              {meta.grado_nombre ? `${meta.grado_nombre}` : ""}
+              {meta.grado_nombre && meta.materia_nombre ? " • " : ""}
+              {meta.materia_nombre ? `${meta.materia_nombre}` : ""}
             </span>
           )}
           {busyState && <span className="me-meta-loading">Actualizando estado…</span>}
@@ -336,7 +389,9 @@ export default function MonitoreoEvaluacion() {
                 <tr>
                   <td colSpan="3" className="me-empty">
                     <EmptyIcon />
-                    <span>Aún no hay estudiantes conectados. Pide que ingresen al enlace de la evaluación.</span>
+                    <span>
+                      Aún no hay estudiantes conectados. Pide que ingresen al enlace de la evaluación.
+                    </span>
                   </td>
                 </tr>
               )}
@@ -360,17 +415,18 @@ function StatCard({ label, value }) {
 }
 
 function StatusPill({ estado }) {
-  const cl = {
-    programada: "rose",
-    en_espera: "blue",
-    listo: "amber",
-    activa: "indigo",
-    en_curso: "indigo",
-    finalizada: "emerald",
-    finalizado: "emerald",
-    cancelada: "gray",
-    retirado: "red",
-  }[estado] || "default";
+  const cl =
+    {
+      programada: "rose",
+      en_espera: "blue",
+      listo: "amber",
+      activa: "indigo",
+      en_curso: "indigo",
+      finalizada: "emerald",
+      finalizado: "emerald",
+      cancelada: "gray",
+      retirado: "red",
+    }[estado] || "default";
   const text = (estado ?? "—").replace("_", " ");
   return <span className={`me-pill ${cl}`}>{text}</span>;
 }

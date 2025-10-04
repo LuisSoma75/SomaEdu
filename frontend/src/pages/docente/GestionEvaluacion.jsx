@@ -2,7 +2,28 @@
 import React, { useEffect, useMemo, useState } from "react";
 import "./GestionEvaluacion.css";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:3001";
+/* ========= Base de API robusta =========
+   - Respeta VITE_API_URL si ya termina en /api o /backend/api
+   - Si no, agrega /api
+   - api(path) limpia "/" inicial y un "api/" accidental (evita /api/api)
+*/
+const API_BASE = (() => {
+  const raw = (import.meta.env.VITE_API_URL || "http://localhost:3001/api")
+    .trim()
+    .replace(/\/+$/, "");
+  if (/\/(backend\/)?api$/i.test(raw)) return raw; // ya incluye /api
+  return `${raw}/api`;
+})();
+
+const api = (p = "") =>
+  `${API_BASE}/${String(p || "")
+    .replace(/^\/+/, "")        // quita "/" inicial
+    .replace(/^api\/+/i, "")}`; // evita api/api
+
+const authHeaders = (token) => ({
+  "Content-Type": "application/json",
+  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+});
 
 export default function GestionEvaluacion() {
   // ===== Tabla / datos =====
@@ -15,7 +36,7 @@ export default function GestionEvaluacion() {
     q: "",
     id_materia: "",
     id_grado: "",
-    estado: "", // programada | abierta | cerrada
+    estado: "", // UI: programada | abierta | cerrada
     desde: "",
     hasta: "",
   });
@@ -32,9 +53,10 @@ export default function GestionEvaluacion() {
   const [showForm, setShowForm] = useState(false);
   const [showAsignar, setShowAsignar] = useState(false);
 
-  // ===== Datos de sesión =====
+  // ===== Datos de sesión / auth =====
   const id_usuario = localStorage.getItem("id_usuario");
   const dpiDoc = localStorage.getItem("dpi") || localStorage.getItem("docente_dpi");
+  const token = (JSON.parse(localStorage.getItem("auth") || "{}")?.token) || localStorage.getItem("token") || "";
 
   // ------------------------------------------------------------
   // Catálogos
@@ -43,13 +65,13 @@ export default function GestionEvaluacion() {
     const cargarCatalogos = async () => {
       try {
         const [rm, rg] = await Promise.all([
-          fetch(`${API}/api/materias`),
-          fetch(`${API}/api/grados`),
+          fetch(api("materias"), { headers: authHeaders(token) }),
+          fetch(api("grados"),   { headers: authHeaders(token) }),
         ]);
-        const jm = await rm.json();
-        const jg = await rg.json();
-        setMaterias(Array.isArray(jm) ? jm : []);
-        setGrados(Array.isArray(jg) ? jg : []);
+        const jm = await rm.json().catch(() => []);
+        const jg = await rg.json().catch(() => []);
+        setMaterias(Array.isArray(jm) ? jm : (jm?.items || jm?.data || []));
+        setGrados(Array.isArray(jg) ? jg : (jg?.items || jg?.data || []));
       } catch {
         // opcional: mostrar error
       } finally {
@@ -57,6 +79,7 @@ export default function GestionEvaluacion() {
       }
     };
     cargarCatalogos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ------------------------------------------------------------
@@ -66,36 +89,108 @@ export default function GestionEvaluacion() {
     const cargarClases = async () => {
       try {
         if (!id_usuario) return;
-        const r = await fetch(`${API}/api/docente/clases/${id_usuario}`);
-        const j = await r.json();
-        setClases(Array.isArray(j) ? j : []);
+        const r = await fetch(api(`docente/clases/${id_usuario}`), {
+          headers: authHeaders(token),
+        });
+        const j = await r.json().catch(() => []);
+        setClases(Array.isArray(j) ? j : (j?.items || j?.data || []));
       } catch {
         setClases([]);
       }
     };
     cargarClases();
-  }, [id_usuario]);
+  }, [id_usuario, token]);
 
   // ------------------------------------------------------------
   // Evaluaciones (sesiones) desde backend
   // ------------------------------------------------------------
+  const mapUiEstadoToBackend = (ui) => {
+    // UI -> backend
+    if (ui === "abierta") return "activa";
+    if (ui === "cerrada") return "finalizada";
+    if (ui === "programada") return "programada";
+    return ""; // sin filtro
+  };
+
+  const mapBackendEstadoToUi = (be) => {
+    // backend -> UI
+    if (be === "activa") return "abierta";
+    if (be === "finalizada") return "cerrada";
+    if (be === "en_espera") return "programada";
+    return be || "programada";
+  };
+
+  const fechaBonita = (row) => {
+    const f =
+      row.creado_en ||
+      row.iniciado_en ||
+      row.finalizado_en ||
+      row.fecha ||
+      null;
+    if (!f) return "—";
+    try {
+      const d = new Date(f);
+      if (isNaN(d.getTime())) return String(f);
+      return d.toLocaleString();
+    } catch {
+      return String(f);
+    }
+  };
+
   const fetchEvaluaciones = async () => {
     setCargando(true);
     setError("");
     try {
       const params = new URLSearchParams();
+
       if (dpiDoc) params.set("creado_por_dpi", dpiDoc);
       if (filtros.id_materia) params.set("id_materia", filtros.id_materia);
       if (filtros.id_grado) params.set("id_grado", filtros.id_grado);
-      if (filtros.estado) params.set("estado", filtros.estado);
       if (filtros.desde) params.set("desde", filtros.desde);
       if (filtros.hasta) params.set("hasta", filtros.hasta);
 
-      const r = await fetch(`${API}/api/docente/evaluaciones?${params.toString()}`);
-      const j = await r.json();
+      // estado (UI) → backend
+      const beEstado = mapUiEstadoToBackend(filtros.estado);
+      if (beEstado) params.set("estado", beEstado);
+
+      const r = await fetch(api(`docente/evaluaciones?${params.toString()}`), {
+        headers: authHeaders(token),
+      });
+      const j = await r.json().catch(() => ({}));
       if (!r.ok || j.ok === false) throw new Error("fetch_fail");
 
-      setEvaluaciones(j.items || []);
+      const rows = Array.isArray(j)
+        ? j
+        : (Array.isArray(j.items) ? j.items : (Array.isArray(j.data) ? j.data : []));
+
+      // Normalizar filas para la tabla
+      const norm = rows.map((ev) => {
+        const id_sesion = Number(ev.id_sesion ?? ev.id ?? ev.sesion_id ?? 0) || 0;
+        const estado_ui = mapBackendEstadoToUi(ev.estado);
+        const modalidad =
+          ev.modalidad ||
+          (ev.num_preg_max ? "num_preguntas" : ev.minutos ? "tiempo" : "hasta_detener");
+
+        return {
+          id: id_sesion, // clave para la tabla
+          id_sesion,
+          nombre: ev.nombre ?? (id_sesion ? `Sesión ${id_sesion}` : "Sesión"),
+          id_grado: Number(ev.id_grado ?? ev.grado_id ?? 0) || 0,
+          id_materia: Number(ev.id_materia ?? ev.materia_id ?? 0) || 0,
+          grado_nombre: ev.grado_nombre ?? null,
+          materia_nombre: ev.materia_nombre ?? null,
+          modalidad,
+          num_preg_max: ev.num_preg_max ?? null,
+          minutos: ev.minutos ?? null,
+          estado: estado_ui, // UI-friendly
+          creado_en: ev.creado_en ?? null,
+          iniciado_en: ev.iniciado_en ?? null,
+          finalizado_en: ev.finalizado_en ?? null,
+          fecha: ev.fecha ?? null,
+        };
+      });
+
+      setEvaluaciones(norm);
     } catch (e) {
       console.error(e);
       setError("No se pudieron cargar las evaluaciones.");
@@ -127,17 +222,22 @@ export default function GestionEvaluacion() {
   // Helpers
   // ------------------------------------------------------------
   const nombreMateria = (id) =>
-    materias.find((m) => Number(m.id_materia) === Number(id))?.Nombre || "";
+    materias.find((m) => Number(m.id_materia) === Number(id))?.Nombre ||
+    materias.find((m) => Number(m.id_materia) === Number(id))?.nombre ||
+    "";
+
   const nombreGrado = (id) =>
-    grados.find((g) => Number(g.id_grado) === Number(id))?.Nombre || "";
+    grados.find((g) => Number(g.id_grado) === Number(id))?.Nombre ||
+    grados.find((g) => Number(g.id_grado) === Number(id))?.nombre ||
+    "";
 
   const renderConfig = (ev) => {
-    if (ev.modalidad === "num_preguntas") return `${ev.num_preguntas ?? "-"} preg.`;
+    if (ev.modalidad === "num_preguntas") return `${ev.num_preg_max ?? "-"} preg.`;
     if (ev.modalidad === "tiempo") return `${ev.minutos ?? "-"} min`;
     return "Hasta detener";
   };
 
-  const badgeEstado = (estado) => (estado === "abierta" ? "activa" : "inactiva");
+  const badgeEstado = (estadoUi) => (estadoUi === "abierta" ? "activa" : "inactiva");
 
   // ------------------------------------------------------------
   // Modal: Crear Evaluación (Sesión)
@@ -173,12 +273,12 @@ export default function GestionEvaluacion() {
           modo_adaptativo: !!form.modoAdaptativo,
         };
 
-        const r = await fetch(`${API}/api/sesiones`, {
+        const r = await fetch(api("sesiones"), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders(token),
           body: JSON.stringify(body),
         });
-        const j = await r.json();
+        const j = await r.json().catch(() => ({}));
         if (!r.ok || j.ok === false) throw new Error(j.msg || "create_fail");
 
         setShowForm(false);
@@ -212,7 +312,7 @@ export default function GestionEvaluacion() {
                 <option value="">Selecciona</option>
                 {clases.map((c) => (
                   <option key={c.id_clase} value={c.id_clase}>
-                    {c.materia} • {c.grado} ({c.estudiantes || 0} est.)
+                    {c.materia || c.materia_nombre || "Materia"} • {c.grado || c.grado_nombre || "Grado"} ({c.estudiantes || 0} est.)
                   </option>
                 ))}
               </select>
@@ -344,7 +444,7 @@ export default function GestionEvaluacion() {
           <option value="">Materia</option>
           {materias.map((m) => (
             <option key={m.id_materia} value={String(m.id_materia)}>
-              {m.Nombre}
+              {m.Nombre || m.nombre}
             </option>
           ))}
         </select>
@@ -355,7 +455,7 @@ export default function GestionEvaluacion() {
           <option value="">Grado</option>
           {grados.map((g) => (
             <option key={g.id_grado} value={String(g.id_grado)}>
-              {g.Nombre}
+              {g.Nombre || g.nombre}
             </option>
           ))}
         </select>
@@ -410,7 +510,7 @@ export default function GestionEvaluacion() {
                   <td>{ev.grado_nombre || nombreGrado(ev.id_grado)}</td>
                   <td>{ev.materia_nombre || nombreMateria(ev.id_materia)}</td>
                   <td>{renderConfig(ev)}</td>
-                  <td>{ev.fecha || "—"}</td>
+                  <td>{fechaBonita(ev)}</td>
                   <td>
                     <span className={`badge ${badgeEstado(ev.estado)}`}>
                       {ev.estado}
