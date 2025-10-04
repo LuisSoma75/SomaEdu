@@ -1,4 +1,4 @@
-// src/utils/App.jsx  (mueve este archivo si tu App.jsx vive en otra carpeta)
+// src/App.jsx
 import React from "react";
 import {
   BrowserRouter as Router,
@@ -7,13 +7,19 @@ import {
   Navigate,
   useParams,
   useNavigate,
+  useLocation,
 } from "react-router-dom";
 
-// AUTH / ADMIN
+// ==== Toggle de LOGS (pon en false para silenciar) ====
+const DBG = true;
+const log  = (...a) => DBG && console.log("[APP]", ...a);
+const warn = (...a) => DBG && console.warn("[APP]", ...a);
+
+// ===== AUTH / ADMIN =====
 import Login from "./pages/auth/Login";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 
-// DOCENTE (layout + páginas)
+// ===== DOCENTE (layout + páginas) =====
 import DocenteLayout from "./layouts/DocenteLayout";
 import DocenteDashboard from "./pages/docente/DocenteDashboard";
 import GestionEvaluacion from "./pages/docente/GestionEvaluacion";
@@ -22,62 +28,120 @@ import HistorialEvaluacionDoc from "./pages/docente/HistorialEvaluacion";
 import ReportesDocente from "./pages/docente/ReportesDocente";
 import SalaDeEsperaDocente from "./pages/docente/SalaDeEsperaDocente.jsx";
 
-// ESTUDIANTE
+// ===== ESTUDIANTE =====
 import EstudianteDashboard from "./pages/estudiante/EstudianteDashboard";
 import EvaluacionesDisponibles from "./pages/estudiante/EvaluacionesDisponibles.jsx";
 import HistorialEvaluacion from "./pages/estudiante/HistorialEvaluacion.jsx";
 import SalaDeEspera from "./pages/estudiante/SalaDeEspera.jsx";
+import ResolverEvaluacion from "./pages/estudiante/ResolverEvaluacion.jsx";
 
 /* =========================
-   Helper de auth (localStorage)
+   Helper de auth (localStorage) — TOLERANTE
 ========================= */
 const getAuth = () => {
   try {
     const raw = localStorage.getItem("auth") || "{}";
+    log("getAuth raw:", raw);
     const p = JSON.parse(raw);
-    return {
-      idUsuario: p.idUsuario ?? p.id ?? p.id_usuario ?? null,
-      role: p.role ?? p.rol ?? null, // 1=admin, 2=docente, 3=estudiante (ajusta a tu esquema)
-      token: p.token ?? null,
-    };
-  } catch {
-    return { idUsuario: null, role: null, token: null };
+
+    // Identificadores posibles
+    const idUsuario =
+      p.idUsuario ??
+      p.id_usuario ??
+      p.userId ??
+      p.usuario_id ??
+      p.id ??
+      null;
+
+    const carne =
+      p.carne_estudiante ??
+      p.carne ??
+      p.carnet ??
+      null;
+
+    // Role opcional (acepta varios nombres/formatos)
+    const roleRaw =
+      p.role ?? p.rol ?? p.id_rol ?? p.role_id ?? p.tipo ?? p.tipo_usuario ?? null;
+    const s = String(roleRaw ?? "").trim().toLowerCase();
+    let role = null;
+    if (s === "3" || s === "estudiante" || s === "student") role = 3;
+    else if (s === "2" || s === "docente" || s === "teacher") role = 2;
+    else if (s === "1" || s === "admin" || s === "administrator") role = 1;
+    else if (!Number.isNaN(Number(s)) && s !== "") role = Number(s);
+
+    const token = p.token ?? p.access_token ?? p.jwt ?? null;
+
+    const auth = { idUsuario, carne, role, token: token ? "****" : null };
+    log("getAuth parsed:", auth);
+    return { idUsuario, carne, role, token };
+  } catch (e) {
+    warn("getAuth error:", e);
+    return { idUsuario: null, carne: null, role: null, token: null };
   }
 };
 
 /* =========================
-   Guards por rol
+   Guards por rol — TOLERANTES
 ========================= */
+// Estudiante: basta con tener identidad (idUsuario o carne).
+const isStudent = (a) => !!(a?.idUsuario || a?.carne);
+
+// Docente: requiere idUsuario y role === 2
+const isTeacher = (a) => !!a?.idUsuario && a?.role === 2;
+
+// Admin: requiere idUsuario y role === 1
+const isAdmin = (a) => !!a?.idUsuario && a?.role === 1;
+
 const DocenteGuard = ({ children }) => {
-  const { idUsuario, role } = getAuth();
-  return idUsuario && String(role) === "2" ? children : <Navigate to="/" replace />;
+  const auth = getAuth();
+  const loc = useLocation();
+  const pass = isTeacher(auth);
+  log("DocenteGuard", { path: loc.pathname, pass, auth: { ...auth, token: auth.token ? "****" : null } });
+  return pass ? children : <Navigate to="/" replace />;
 };
 
 const EstudianteGuard = ({ children }) => {
-  const { idUsuario, role } = getAuth();
-  return idUsuario && String(role) === "3" ? children : <Navigate to="/" replace />;
+  const auth = getAuth();
+  const loc = useLocation();
+  const pass = isStudent(auth);
+  log("EstudianteGuard", { path: loc.pathname, pass, auth: { ...auth, token: auth.token ? "****" : null } });
+  return pass ? children : <Navigate to="/" replace />;
 };
 
 const AdminGuard = ({ children }) => {
-  const { idUsuario, role } = getAuth();
-  return idUsuario && String(role) === "1" ? children : <Navigate to="/" replace />;
+  const auth = getAuth();
+  const loc = useLocation();
+  const pass = isAdmin(auth);
+  log("AdminGuard", { path: loc.pathname, pass, auth: { ...auth, token: auth.token ? "****" : null } });
+  return pass ? children : <Navigate to="/" replace />;
 };
 
 /* =========================
    Wrappers para salas
 ========================= */
-// Sala de espera estudiante
+// Sala de espera estudiante (redirige a resolver cuando se inicie)
 const StudentWaitroomRoute = () => {
   const { sessionId } = useParams();
   const navigate = useNavigate();
-  const { idUsuario, role } = getAuth();
-  if (!idUsuario || String(role) !== "3") return <Navigate to="/" replace />;
+  const auth = getAuth();
+  const loc = useLocation();
+
+  const pass = isStudent(auth);
+  log("StudentWaitroomRoute mount", { path: loc.pathname, sessionId, pass });
+
+  if (!pass) return <Navigate to="/" replace />;
+
   const sid = Number(sessionId);
+  const onStart = () => {
+    log("StudentWaitroomRoute.onStart -> resolver", { sid });
+    navigate(`/estudiante/resolver/${sid}`);
+  };
+
   return (
     <SalaDeEspera
       sessionId={sid}
-      idEstudiante={idUsuario}
-      onStart={() => navigate(`/estudiante/resolver/${sid}`)}
+      idEstudiante={auth.idUsuario || auth.carne}
+      onStart={onStart}
     />
   );
 };
@@ -85,10 +149,16 @@ const StudentWaitroomRoute = () => {
 // Sala de espera docente
 const DocenteWaitroomRoute = () => {
   const { sessionId } = useParams();
-  const { idUsuario, role } = getAuth();
-  if (!idUsuario || String(role) !== "2") return <Navigate to="/" replace />;
+  const auth = getAuth();
+  const loc = useLocation();
+
+  const pass = isTeacher(auth);
+  log("DocenteWaitroomRoute mount", { path: loc.pathname, sessionId, pass });
+
+  if (!pass) return <Navigate to="/" replace />;
+
   const sid = Number(sessionId);
-  return <SalaDeEsperaDocente sessionId={sid} idDocente={idUsuario} />;
+  return <SalaDeEsperaDocente sessionId={sid} idDocente={auth.idUsuario} />;
 };
 
 function App() {
@@ -98,7 +168,7 @@ function App() {
         {/* Público / auth */}
         <Route path="/" element={<Login />} />
 
-        {/* Admin (si aplica) */}
+        {/* Admin */}
         <Route
           path="/admin"
           element={
@@ -108,7 +178,7 @@ function App() {
           }
         />
 
-        {/* DOCENTE: layout + rutas hijas SIEMPRE bajo /docente */}
+        {/* DOCENTE: layout + rutas hijas bajo /docente */}
         <Route
           path="/docente"
           element={
@@ -127,7 +197,7 @@ function App() {
         {/* Sala de espera del docente (sesión específica) */}
         <Route path="/docente/sala/:sessionId" element={<DocenteWaitroomRoute />} />
 
-        {/* ESTUDIANTE (SIEMPRE bajo /estudiante) */}
+        {/* ESTUDIANTE (bajo /estudiante) */}
         <Route
           path="/estudiante"
           element={
@@ -153,6 +223,16 @@ function App() {
           }
         />
         <Route path="/estudiante/sala/:sessionId" element={<StudentWaitroomRoute />} />
+
+        {/* 👉 Ruta para resolver evaluación directamente */}
+        <Route
+          path="/estudiante/resolver/:sessionId"
+          element={
+            <EstudianteGuard>
+              <ResolverEvaluacion />
+            </EstudianteGuard>
+          }
+        />
 
         {/* Fallback a login */}
         <Route path="*" element={<Navigate to="/" replace />} />

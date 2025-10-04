@@ -6,16 +6,31 @@ import "./EvaluacionesDisponibles.css";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
+// Toggle de logs locales de esta vista
+const DBG = true;
+const log = (...a) => DBG && console.log("[EVALUACIONES]", ...a);
+const warn = (...a) => DBG && console.warn("[EVALUACIONES]", ...a);
+
 export default function EvaluacionesDisponibles() {
   const navigate = useNavigate();
 
   // -------- auth ----------
   const auth = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem("auth") || "{}"); }
-    catch { return {}; }
+    try {
+      const raw = localStorage.getItem("auth") || "{}";
+      log("auth RAW:", raw);
+      const parsed = JSON.parse(raw);
+      log("auth PARSED:", parsed);
+      return parsed;
+    } catch {
+      warn("No se pudo parsear localStorage.auth");
+      return {};
+    }
   }, []);
+
   const idUsuario = auth.id_usuario ?? auth.idUsuario ?? auth.userId ?? null;
   const carne = auth.carne_estudiante ?? auth.carne ?? null;
+  log("auth.normalizado ->", { idUsuario, carne });
 
   // -------- estado UI ----------
   const [loading, setLoading] = useState(true);
@@ -25,6 +40,7 @@ export default function EvaluacionesDisponibles() {
 
   // -------- handlers ----------
   const handleLogout = () => {
+    log("Logout click");
     try {
       localStorage.removeItem("auth");
       // limpiar llaves antiguas por compatibilidad
@@ -38,7 +54,11 @@ export default function EvaluacionesDisponibles() {
     }
   };
 
-  const goToSala = (idSesion) => navigate(`/estudiante/sala/${idSesion}`);
+  // 👉 Ahora lleva directo a resolver
+  const goToSala = (idSesion) => {
+    log("click Resolver >", { idSesion });
+    navigate(`/estudiante/resolver/${idSesion}`);
+  };
 
   // -------- carga desde API (con fallback) ----------
   useEffect(() => {
@@ -53,36 +73,48 @@ export default function EvaluacionesDisponibles() {
         `${API}/api/sesiones/disponibles?userId=${idUsuario ?? ""}`,
       ].filter(Boolean);
 
+      log("Intentando cargar evaluaciones desde:", endpoints);
+
       let ok = false;
       for (const url of endpoints) {
         try {
           const r = await fetch(url, { headers: { "Content-Type": "application/json" } });
+          log("fetch:", url, "->", r.status);
           if (!r.ok) continue;
+
           const j = await r.json();
-
           const raw = j.items ?? j.data ?? j ?? [];
-          const norm = (Array.isArray(raw) ? raw : []).map((x) => ({
-            id: x.id ?? x.id_sesion ?? x.sessionId ?? x.sesion_id ?? null,
-            titulo: x.titulo ?? x.nombre ?? "Evaluación",
-            grado: x.grado ?? x.grado_nombre ?? null,
-            materia: x.materia ?? x.materia_nombre ?? null,
-            fecha: x.fecha ?? x.creado_en ?? null,
-            estado: x.estado ?? "Disponible",
-            modalidad:
-              x.modalidad ??
-              (x.tiempo_limite_seg ? "Tiempo" : (x.num_preg_max ? "# Preguntas" : "Hasta detener")),
-            minutos: x.minutos ?? (x.tiempo_limite_seg ? Math.round(Number(x.tiempo_limite_seg) / 60) : null),
-            num_preguntas: x.num_preguntas ?? (x.num_preg_max ?? null),
-            docente: x.docente ?? x.docente_nombre ?? null,
-          })).filter(e => e.id != null);
+          const arr = Array.isArray(raw) ? raw : [];
+          const norm = arr
+            .map((x) => ({
+              id: x.id ?? x.id_sesion ?? x.sessionId ?? x.sesion_id ?? null,
+              titulo: x.titulo ?? x.nombre ?? "Evaluación",
+              grado: x.grado ?? x.grado_nombre ?? null,
+              materia: x.materia ?? x.materia_nombre ?? null,
+              fecha: x.fecha ?? x.creado_en ?? null,
+              estado: x.estado ?? "Disponible",
+              modalidad:
+                x.modalidad ??
+                (x.tiempo_limite_seg ? "Tiempo" : (x.num_preg_max ? "# Preguntas" : "Hasta detener")),
+              minutos:
+                x.minutos ??
+                (x.tiempo_limite_seg ? Math.round(Number(x.tiempo_limite_seg) / 60) : null),
+              num_preguntas: x.num_preguntas ?? x.num_preg_max ?? null,
+              docente: x.docente ?? x.docente_nombre ?? null,
+            }))
+            .filter((e) => e.id != null);
 
+          log("normalizados =", norm.length, "items");
           if (!cancel) setItems(norm);
           ok = true;
           break;
-        } catch (_) {}
+        } catch (e) {
+          warn("Error cargando", url, e);
+        }
       }
 
       if (!ok && !cancel) {
+        warn("Fallo carga API, usando fallback");
         setItems([
           {
             id: 101,
@@ -94,34 +126,37 @@ export default function EvaluacionesDisponibles() {
             modalidad: "Hasta detener",
             minutos: null,
             docente: null,
-          }
+          },
         ]);
         setError("No se pudo cargar desde la API; mostrando ejemplo.");
       }
       if (!cancel) setLoading(false);
     })();
     return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [API, idUsuario, carne]);
 
   const list = useMemo(() => {
     const q = filtro.trim().toLowerCase();
     if (!q) return items;
-    return items.filter((x) =>
+    const filtered = items.filter((x) =>
       [x.titulo, x.grado, x.materia, x.docente]
         .filter(Boolean)
         .some((s) => String(s).toLowerCase().includes(q))
     );
+    log("Filtro=", q, " -> ", filtered.length, "items");
+    return filtered;
   }, [items, filtro]);
 
   return (
-    <div className="student-page">
+    <div className="student-page" data-testid="evaluaciones-page">
       <StudentSidebar activeKey="evaluaciones" />
 
       <main className="main-content">
         <header className="edb-header">
           <div>
             <h1 className="edb-title">Evaluaciones disponibles</h1>
-            <p className="edb-sub">Selecciona una evaluación para entrar a la sala de espera.</p>
+            <p className="edb-sub">Selecciona una evaluación para resolverla.</p>
           </div>
           <div className="edb-quick" style={{ gap: 12, display: "flex", alignItems: "center" }}>
             <input
@@ -174,8 +209,12 @@ export default function EvaluacionesDisponibles() {
                         <td>{e.fecha ? String(e.fecha).slice(0, 10) : "—"}</td>
                         <td><span className={`pill ${String(e.estado).toLowerCase()}`}>{e.estado}</span></td>
                         <td className="t-right">
-                          <button className="btn primary sm" onClick={() => goToSala(e.id)}>
-                            Entrar a sala
+                          <button
+                            className="btn primary sm"
+                            data-testid={`btn-resolver-${e.id}`}
+                            onClick={() => goToSala(e.id)}
+                          >
+                            Resolver
                           </button>
                         </td>
                       </tr>
