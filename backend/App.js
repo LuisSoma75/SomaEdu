@@ -16,14 +16,15 @@ import sesionesRouter from "./api/routes/sesiones.js";
 import docenteEvaluacionesRouter from "./api/routes/docente-evaluaciones.js";
 
 // Portal Estudiante
-import estudianteDashboardRouter     from "./api/routes/estudiante/dashboard.js";
-import evaluacionesDisponiblesRouter from "./api/routes/estudiante/evaluaciones.js";
-import historialEvaluacionRouter     from "./api/routes/estudiante/historial.js";
-import perfilEstudianteRouter        from "./api/routes/estudiante/perfil.js";
-import reporteDesempenoRouter        from "./api/routes/estudiante/reporte.js";
+import estudianteDashboardRouter    from "./api/routes/estudiante/dashboard.js";
+// ⬇️ usa el archivo nuevo:
+import estudianteEvaluacionesRouter from "./api/routes/estudiante/estudiante-evaluaciones.js";
+import historialEvaluacionRouter    from "./api/routes/estudiante/historial.js";
+import perfilEstudianteRouter       from "./api/routes/estudiante/perfil.js";
+import reporteDesempenoRouter       from "./api/routes/estudiante/reporte.js";
 
 const app = express();
-const PREFIXES = ["/backend/api", "/api"]; // <<< montamos en ambos
+const PREFIXES = ["/backend/api", "/api"]; // montamos en ambos
 
 /* ============ CORS ============ */
 app.use(cors());
@@ -31,6 +32,26 @@ app.use(cors());
 /* ============ Parsers ============ */
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
+
+/* ============ Parachoques /api/api -> /api (y backend/api/api -> backend/api) ============ */
+// (antes del logger)
+app.use((req, _res, next) => {
+  const original = req.url;
+
+  // /api/api/... -> /api/...
+  if (req.url.startsWith("/api/api/")) req.url = req.url.replace("/api/api/", "/api/");
+  else if (req.url === "/api/api") req.url = "/api";
+
+  // /backend/api/api/... -> /backend/api/...
+  if (req.url.startsWith("/backend/api/api/")) {
+    req.url = req.url.replace("/backend/api/api/", "/backend/api/");
+  } else if (req.url === "/backend/api/api") {
+    req.url = "/backend/api";
+  }
+
+  if (original !== req.url) console.log(`[fixPrefix] ${original} -> ${req.url}`);
+  next();
+});
 
 /* ============ Logger simple (con ID y tiempo) ============ */
 app.use((req, res, next) => {
@@ -96,13 +117,15 @@ function mountAll(prefix) {
   mount(prefix, "/adaptive", adaptiveRouter);
   mount(prefix, "/sesiones", sesionesRouter);
   mount(prefix, "/docente/evaluaciones", docenteEvaluacionesRouter);
+
+  // Portal estudiante
   mount(prefix, "/estudiante/dashboard",    estudianteDashboardRouter);
-  mount(prefix, "/estudiante/evaluaciones", evaluacionesDisponiblesRouter);
+  mount(prefix, "/estudiante/evaluaciones", estudianteEvaluacionesRouter); // ⬅️ nuevo
   mount(prefix, "/estudiante/historial",    historialEvaluacionRouter);
   mount(prefix, "/estudiante/perfil",       perfilEstudianteRouter);
   mount(prefix, "/estudiante/reporte",      reporteDesempenoRouter);
 
-  // health y db-ping también bajo el prefijo (comodidad)
+  // Atajos de health/db-ping bajo el prefijo
   app.get(`${prefix}/health`, (_req, res) => res.json({ ok: true, prefixed: prefix }));
   app.get(`${prefix}/db-ping`, async (_req, res) => {
     try {
