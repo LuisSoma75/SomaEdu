@@ -3,32 +3,37 @@ import http from "http";
 import express from "express";
 import cors from "cors";
 
-import sesionesRouter from "./routes/sesiones.js";                 // existente
-import docenteEvalRouter from "./routes/docente-evaluaciones.js";  // existente
-import estudiantesRouter from "./routes/estudiantes.js";           // NUEVO (nombre/grado del estudiante)
-import waitroomRouter from "./routes/waitroom.js";                 // sala de espera (REST)
-import attachWaitroom from "./realtime/waitroom.js";               // sala de espera (Socket.IO)
+// Routers
+import sesionesRouter from "./routes/sesiones.js";
+import docenteEvalRouter from "./routes/docente-evaluaciones.js";
+import estudiantesRouter from "./routes/estudiantes.js";
+import waitroomRouter from "./routes/waitroom.js";
+import adaptativeRouter from "./routes/adaptative.js";
+import authRouter from "./routes/auth.js";
+// 👇 NUEVO: listado de evaluaciones para estudiante (por grado)
+import estudianteEvalRouter from "./routes/estudiante/estudiante-evaluaciones.js";
 
-// ---------- Config básica ----------
+// Socket.IO
+import attachWaitroom from "./realtime/waitroom.js";
+
+// ================= Config =================
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
-
-// Admite varios orígenes separados por coma.
-// Ej.: CORS_ORIGINS="http://localhost:5173,http://127.0.0.1:5173"
-const ORIGINS_ENV =
+const ORIGINS = (
   process.env.CORS_ORIGINS ||
-  process.env.CORS_ORIGIN || // compat
-  "http://localhost:5173";
+  process.env.CORS_ORIGIN ||
+  "http://localhost:5173"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-const ORIGINS = ORIGINS_ENV.split(",").map((s) => s.trim()).filter(Boolean);
-
-// Express hardening / parsing
+// ================= Middlewares =================
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// CORS (uno o varios orígenes)
 app.use(
   cors({
     origin: ORIGINS,
@@ -36,23 +41,55 @@ app.use(
   })
 );
 
-// ---------- Rutas REST ----------
+// Fix defensivo por si llega /api/api/... etc.
+app.use((req, _res, next) => {
+  const before = req.url;
+  const fixes = [
+    ["/api/api/", "/api/"],
+    ["/backend/api/api/", "/backend/api/"],
+    ["/api/backend/api/", "/backend/api/"],
+  ];
+  for (const [a, b] of fixes) {
+    if (req.url.startsWith(a)) req.url = req.url.replace(a, b);
+  }
+  if (before !== req.url) console.log(`[fixPrefix] ${before} -> ${req.url}`);
+  next();
+});
+
+// ================= Montaje de rutas =================
+// Prefijo /api
+app.use("/api/auth", authRouter);
 app.use("/api/sesiones", sesionesRouter);
 app.use("/api/docente/evaluaciones", docenteEvalRouter);
-app.use("/api/estudiantes", estudiantesRouter); // <- para /api/estudiantes/:id/resumen
+app.use("/api/estudiantes", estudiantesRouter); // /by-user/:id/resumen, etc.
+app.use("/api/estudiante/evaluaciones", estudianteEvalRouter); // 👈 NUEVO
 app.use("/api/waitroom", waitroomRouter);
+app.use("/api/adaptative", adaptativeRouter);
+app.get("/api/ping", (_req, res) => res.json({ ok: true, base: "/api" }));
 
-// Salud
-app.get("/api/ping", (_req, res) =>
-  res.json({ ok: true, ts: new Date().toISOString() })
+// Prefijo /backend/api (compatibilidad)
+app.use("/backend/api/auth", authRouter);
+app.use("/backend/api/sesiones", sesionesRouter);
+app.use("/backend/api/docente/evaluaciones", docenteEvalRouter);
+app.use("/backend/api/estudiantes", estudiantesRouter);
+app.use(
+  "/backend/api/estudiante/evaluaciones",
+  estudianteEvalRouter // 👈 NUEVO
+);
+app.use("/backend/api/waitroom", waitroomRouter);
+app.use("/backend/api/adaptative", adaptativeRouter);
+app.get("/backend/api/ping", (_req, res) =>
+  res.json({ ok: true, base: "/backend/api" })
 );
 
-// ---------- HTTP + Socket.IO ----------
-const server = http.createServer(app);
-// Socket.IO acepta array en origin
-attachWaitroom(server, { corsOrigin: ORIGINS });
+// Health simple en raíz
+app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// ---------- 404 ----------
+// ================= HTTP + Socket.IO =================
+const server = http.createServer(app);
+attachWaitroom(server, { corsOrigin: ORIGINS, path: "/socket.io" });
+
+// ================= 404 =================
 app.use((req, res) => {
   res.status(404).json({
     ok: false,
@@ -61,7 +98,7 @@ app.use((req, res) => {
   });
 });
 
-// ---------- Manejo de errores ----------
+// ================= Errores =================
 app.use((err, _req, res, _next) => {
   console.error("[API ERROR]", err);
   const status =
@@ -73,8 +110,9 @@ app.use((err, _req, res, _next) => {
   });
 });
 
-// ---------- Start ----------
+// ================= Start =================
 server.listen(PORT, () => {
   console.log(`[API] escuchando en http://localhost:${PORT}`);
   console.log(`[API] CORS origins: ${ORIGINS.join(", ")}`);
+  console.log("Mounted prefixes: /api, /backend/api");
 });

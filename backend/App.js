@@ -2,6 +2,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import "./api/server.js";
 
 // ===== Rutas =====
 import authRouter from "./api/routes/auth.js";

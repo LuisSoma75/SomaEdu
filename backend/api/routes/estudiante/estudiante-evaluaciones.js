@@ -7,15 +7,22 @@ const router = express.Router();
 /**
  * GET /api/estudiante/evaluaciones
  *
- * Parámetros admitidos:
+ * Parámetros admitidos (cualquiera de los identificadores):
  *  - id_usuario | userId | carne | dpi | id_grado | grado_id
+ *
+ * Filtros opcionales:
  *  - estado (csv) ej: programada,en_espera,activa,finalizada
  *  - id_materia
- *  - desde, hasta  (YYYY-MM-DD)  -> COALESCE(se.creado_en, se.iniciado_en)
+ *  - desde, hasta  (YYYY-MM-DD)  -> se filtra por COALESCE(se.creado_en, se.iniciado_en)
  *  - page, size
  *
  * Respuesta:
  *  { ok:true, items:[...], data:[...], page, size }
+ *
+ * Notes:
+ * - Normalizamos el shape para que el frontend pueda mapear:
+ *   { id: id_sesion, titulo: nombre, grado: grado_nombre, materia: materia_nombre, ... }
+ *   El propio frontend ya admite 'id' o 'id_sesion', etc., pero aquí dejamos datos claros.
  */
 router.get("/", async (req, res, next) => {
   try {
@@ -26,7 +33,7 @@ router.get("/", async (req, res, next) => {
       dpi,
       id_grado,
       grado_id,
-      estado = "programada,en_espera,activa", // <- incluye programada por defecto
+      estado = "programada,en_espera,activa", // por defecto mostramos abiertas
       id_materia,
       desde,
       hasta,
@@ -34,35 +41,37 @@ router.get("/", async (req, res, next) => {
       size = 50,
     } = req.query;
 
-    // 1) Resolver identificadores de alumno / grado
-    let alumnoIdUsuario = Number(req.user?.id_usuario ?? id_usuario ?? userId) || null;
-    let alumnoCarne     = carne ? String(carne) : null;
-    let alumnoDpi       = dpi ? String(dpi) : null;
-    let gradoId         = Number(id_grado ?? grado_id) || null;
+    // ------------------ 1) Resolver el id_grado del alumno ------------------
+    let gradoId = Number(id_grado ?? grado_id) || null;
 
-    // Si no llega id_grado, lo buscamos en Estudiantes con cualquiera de los identificadores
+    // Si no vino id_grado, buscamos en Estudiantes por cualquiera de los identificadores
     if (!gradoId) {
       const whereStu = [];
       const paramsStu = [];
 
-      if (alumnoIdUsuario) {
+      const _idUsuario = Number(id_usuario ?? userId) || null;
+      const _carne = carne ? String(carne) : null;
+      const _dpi = dpi ? String(dpi) : null;
+
+      if (_idUsuario) {
         whereStu.push(`e.id_usuario = $${paramsStu.length + 1}`);
-        paramsStu.push(alumnoIdUsuario);
+        paramsStu.push(_idUsuario);
       }
-      if (alumnoCarne) {
+      if (_carne) {
         whereStu.push(`e.carne_estudiante = $${paramsStu.length + 1}`);
-        paramsStu.push(alumnoCarne);
+        paramsStu.push(_carne);
       }
-      if (alumnoDpi) {
+      if (_dpi) {
         whereStu.push(`e.dpi = $${paramsStu.length + 1}`);
-        paramsStu.push(alumnoDpi);
+        paramsStu.push(_dpi);
       }
 
       if (!whereStu.length) {
         return res.status(400).json({
           ok: false,
           error: "missing_user",
-          message: "Falta id_usuario/userId o carne o dpi, o id_grado/grado_id.",
+          message:
+            "Falta id_usuario/userId o carne o dpi, o id_grado/grado_id.",
         });
       }
 
@@ -72,19 +81,28 @@ router.get("/", async (req, res, next) => {
         WHERE ${whereStu.join(" OR ")}
         LIMIT 1
       `;
-      console.log("[SQL stu]", sqlStu, "| params:", paramsStu);
+      console.log("[SQL stu]", sqlStu.replace(/\s+/g, " ").trim(), "| params:", paramsStu);
 
       const rStu = await db.query(sqlStu, paramsStu);
       if (rStu.rows.length) {
         gradoId = Number(rStu.rows[0].id_grado);
       } else {
-        // No encontramos el alumno -> lista vacía (no error)
-        return res.json({ ok: true, items: [], data: [], page: Number(page), size: Number(size) });
+        // Alumno no encontrado -> devolvemos lista vacía (no es error)
+        return res.json({
+          ok: true,
+          items: [],
+          data: [],
+          page: Number(page),
+          size: Number(size),
+        });
       }
     }
 
-    // 2) Filtros de sesiones
-    const estados = String(estado).split(",").map(s => s.trim()).filter(Boolean);
+    // ------------------ 2) Filtros de sesiones ------------------
+    const estados = String(estado)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const where = [`c.id_grado = $1`];
     const params = [gradoId];
@@ -98,11 +116,15 @@ router.get("/", async (req, res, next) => {
       params.push(Number(id_materia));
     }
     if (desde) {
-      where.push(`COALESCE(se.creado_en, se.iniciado_en) >= $${params.length + 1}`);
+      where.push(
+        `COALESCE(se.creado_en, se.iniciado_en) >= $${params.length + 1}`
+      );
       params.push(desde);
     }
     if (hasta) {
-      where.push(`COALESCE(se.creado_en, se.iniciado_en) <= $${params.length + 1}`);
+      where.push(
+        `COALESCE(se.creado_en, se.iniciado_en) <= $${params.length + 1}`
+      );
       params.push(hasta);
     }
 
@@ -131,25 +153,48 @@ router.get("/", async (req, res, next) => {
       LIMIT ${limit} OFFSET ${offset}
     `;
 
-    console.log("[SQL]", sql, "| params:", params);
-
+    console.log("[SQL]", sql.replace(/\s+/g, " ").trim(), "| params:", params);
     const { rows } = await db.query(sql, params);
 
-    const items = rows.map(r => ({
+    // ------------------ 3) Normalizar al shape del frontend ------------------
+    const items = rows.map((r) => ({
+      // claves base (compat con frontend)
+      id: Number(r.id_sesion),              // el front acepta id o id_sesion
       id_sesion: Number(r.id_sesion),
+      titulo: r.nombre,
       nombre: r.nombre,
-      estado: r.estado, // programada | en_espera | activa | finalizada
-      pin: r.pin || null,
+      estado: r.estado,                     // programada | en_espera | activa | finalizada
+      fecha: r.iniciado_en || null,
+      // clase/materia/grado
       id_clase: Number(r.id_clase),
       id_grado: Number(r.id_grado),
       id_materia: Number(r.id_materia),
+      grado: r.grado_nombre ?? null,
       grado_nombre: r.grado_nombre ?? null,
+      materia: r.materia_nombre ?? null,
       materia_nombre: r.materia_nombre ?? null,
+      // otros
+      pin: r.pin || null,
       iniciado_en: r.iniciado_en || null,
       finalizado_en: r.finalizado_en || null,
+
+      // campos que usa la tabla (si existen num_preg_max/minutos en tu modelo, ajusta aquí)
+      modalidad: "# Preguntas",
+      minutos: null,
+      num_preguntas: null,
+
+      // extras útiles por si navegas con state a Resolver
+      num_preg_max: 10, // cambia si lo tienes en BD
+      docente: null,
     }));
 
-    res.json({ ok: true, items, data: items, page: Number(page), size: limit });
+    return res.json({
+      ok: true,
+      items,
+      data: items,
+      page: Number(page),
+      size: limit,
+    });
   } catch (err) {
     console.error("GET /api/estudiante/evaluaciones error:", err);
     next(err);

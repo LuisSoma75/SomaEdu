@@ -19,23 +19,41 @@ function parseBool(v) {
   return null;
 }
 
-/** Decide si usar SSL */
+/* --------- Decidir SSL de forma robusta --------- */
 const envSSL =
   parseBool(process.env.PGSSL) ??
   parseBool(process.env.DATABASE_SSL);
 
-const shouldUseSSL = (() => {
-  if (envSSL !== null) return envSSL;
-  if (/\bsslmode=require\b/i.test(CONNECTION_STRING)) return true;
-  if (/(neon\.tech|render\.com|supabase\.co|herokuapp\.com)/i.test(CONNECTION_STRING)) return true;
-  return String(process.env.NODE_ENV || "").toLowerCase() === "production";
-})();
+const envDisableSSL = parseBool(process.env.PGSSL_DISABLE); // 👈 permite forzar OFF
+
+const isLocalConn = /(?:^|@)(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?/i.test(CONNECTION_STRING);
+
+let shouldUseSSL;
+if (envDisableSSL === true) {
+  // prioridad: si pides desactivar, va OFF
+  shouldUseSSL = false;
+} else if (envSSL !== null) {
+  // si especificaste PGSSL/DATABASE_SSL explícitamente, respétalo
+  shouldUseSSL = envSSL;
+} else if (/\b(sslmode=require|ssl=true)\b/i.test(CONNECTION_STRING)) {
+  // querystring obliga SSL
+  shouldUseSSL = true;
+} else if (isLocalConn) {
+  // conexiones locales no usan SSL salvo que lo fuerces
+  shouldUseSSL = false;
+} else if (/(neon\.tech|render\.com|supabase\.co|herokuapp\.com)/i.test(CONNECTION_STRING)) {
+  // proveedores que normalmente requieren TLS
+  shouldUseSSL = true;
+} else {
+  // por defecto, producción -> on; dev -> off
+  shouldUseSSL = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+}
 
 /* --------- Pool --------- */
 const pool = new Pool({
   connectionString: CONNECTION_STRING || undefined,
-  ssl: shouldUseSSL ? { rejectUnauthorized: false } : false, // Neon requiere TLS
-  max: Number(process.env.PGPOOL_MAX || 5),                  // Neon no necesita pools grandes
+  ssl: shouldUseSSL ? { rejectUnauthorized: false } : false,
+  max: Number(process.env.PGPOOL_MAX || 5),
   idleTimeoutMillis: Number(process.env.PG_IDLE || 30000),
   connectionTimeoutMillis: Number(process.env.PG_CONN_TIMEOUT || 10000),
   keepAlive: true,
@@ -48,11 +66,12 @@ pool.on("error", (err) => {
 /* --------- Log SQL opcional --------- */
 function logSQL(text, params) {
   if (String(process.env.DEBUG_SQL || "") !== "1") return;
-  // Sanitiza params (por si alguno es sensible)
   const safeParams = Array.isArray(params)
-    ? params.map((p) => (typeof p === "string" && p.length > 200 ? p.slice(0, 200) + "…[truncated]" : p))
+    ? params.map((p) =>
+        typeof p === "string" && p.length > 200 ? p.slice(0, 200) + "…[truncated]" : p
+      )
     : params;
-  console.log("[SQL]", text.replace(/\s+/g, " ").trim(), "| params:", safeParams);
+  console.log("[SQL]", String(text).replace(/\s+/g, " ").trim(), "| params:", safeParams);
 }
 
 /* --------- Helpers --------- */
@@ -79,5 +98,7 @@ export default db;
 
 // Log inicial útil
 console.log(
-  `[DB] Using ${CONNECTION_STRING ? "DATABASE_URL*" : "local config"} | SSL: ${shouldUseSSL ? "on" : "off"}`
+  `[DB] Using ${CONNECTION_STRING ? "DATABASE_URL*" : "local config"} | SSL: ${
+    shouldUseSSL ? "on" : "off"
+  }${envDisableSSL ? " (PGSSL_DISABLE)" : isLocalConn ? " (local)" : ""}`
 );
