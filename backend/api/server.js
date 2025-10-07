@@ -2,6 +2,7 @@
 import http from "http";
 import express from "express";
 import cors from "cors";
+import { pathToFileURL } from "url";
 
 // Routers
 import sesionesRouter from "./routes/sesiones.js";
@@ -10,7 +11,7 @@ import estudiantesRouter from "./routes/estudiantes.js";
 import waitroomRouter from "./routes/waitroom.js";
 import adaptativeRouter from "./routes/adaptative.js";
 import authRouter from "./routes/auth.js";
-// 👇 NUEVO: listado de evaluaciones para estudiante (por grado)
+// 👇 Listado de evaluaciones para estudiante (por grado)
 import estudianteEvalRouter from "./routes/estudiante/estudiante-evaluaciones.js";
 
 // Socket.IO
@@ -61,8 +62,8 @@ app.use((req, _res, next) => {
 app.use("/api/auth", authRouter);
 app.use("/api/sesiones", sesionesRouter);
 app.use("/api/docente/evaluaciones", docenteEvalRouter);
-app.use("/api/estudiantes", estudiantesRouter); // /by-user/:id/resumen, etc.
-app.use("/api/estudiante/evaluaciones", estudianteEvalRouter); // 👈 NUEVO
+app.use("/api/estudiantes", estudiantesRouter);
+app.use("/api/estudiante/evaluaciones", estudianteEvalRouter);
 app.use("/api/waitroom", waitroomRouter);
 app.use("/api/adaptative", adaptativeRouter);
 app.get("/api/ping", (_req, res) => res.json({ ok: true, base: "/api" }));
@@ -72,10 +73,7 @@ app.use("/backend/api/auth", authRouter);
 app.use("/backend/api/sesiones", sesionesRouter);
 app.use("/backend/api/docente/evaluaciones", docenteEvalRouter);
 app.use("/backend/api/estudiantes", estudiantesRouter);
-app.use(
-  "/backend/api/estudiante/evaluaciones",
-  estudianteEvalRouter // 👈 NUEVO
-);
+app.use("/backend/api/estudiante/evaluaciones", estudianteEvalRouter);
 app.use("/backend/api/waitroom", waitroomRouter);
 app.use("/backend/api/adaptative", adaptativeRouter);
 app.get("/backend/api/ping", (_req, res) =>
@@ -87,6 +85,7 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // ================= HTTP + Socket.IO =================
 const server = http.createServer(app);
+// Adjuntar Socket.IO (no abre puerto por sí solo)
 attachWaitroom(server, { corsOrigin: ORIGINS, path: "/socket.io" });
 
 // ================= 404 =================
@@ -110,9 +109,22 @@ app.use((err, _req, res, _next) => {
   });
 });
 
-// ================= Start =================
-server.listen(PORT, () => {
-  console.log(`[API] escuchando en http://localhost:${PORT}`);
-  console.log(`[API] CORS origins: ${ORIGINS.join(", ")}`);
-  console.log("Mounted prefixes: /api, /backend/api");
-});
+// ================= Start (solo si es entrypoint) =================
+let isDirectRun = false;
+try {
+  const entryHref = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+  isDirectRun = import.meta.url === entryHref;
+} catch {
+  isDirectRun = false;
+}
+
+if (isDirectRun) {
+  server.listen(PORT, () => {
+    console.log(`[API] escuchando en http://localhost:${PORT}`);
+    console.log(`[API] CORS origins: ${ORIGINS.join(", ")}`);
+    console.log("Mounted prefixes: /api, /backend/api");
+  });
+}
+
+// Exporta para que otros entrypoints (p. ej. backend/App.js) puedan reutilizar
+export { app, server, PORT, ORIGINS };

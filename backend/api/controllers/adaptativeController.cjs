@@ -1,4 +1,4 @@
-// api/controllers/adaptativeController.cjs
+// backend/api/controllers/adaptativeController.cjs
 // Controlador CommonJS.
 // IA rankea preguntas; BD provee enunciados/opciones y persiste progreso.
 
@@ -26,13 +26,11 @@ async function tableColumns(table) {
     hasDefault: r.column_default != null,
   }));
 }
-
 async function hasColumns(table, names) {
   const cols = await tableColumns(table);
   const set = new Set(cols.map(c => c.name.toLowerCase()));
   return names.every(n => set.has(String(n).toLowerCase()));
 }
-
 async function existsSesion(id_sesion) {
   if (!Number.isFinite(Number(id_sesion))) return false;
   const { rows } = await db.query(
@@ -43,10 +41,76 @@ async function existsSesion(id_sesion) {
 }
 
 /* ==================================
+   Helpers de sesión/evaluación (modos)
+================================== */
+
+async function getSesionCfgByEvaluacion(id_evaluacion) {
+  const { rows } = await db.query(
+    `
+    SELECT se."id_sesion",
+           se."num_preg_max",
+           se."tiempo_limite_seg",
+           se."estado",
+           se."iniciado_en"
+    FROM "Evaluacion" ev
+    JOIN "Sesion_evaluacion" se ON se."id_sesion" = ev."id_sesion"
+    WHERE ev."id_evaluacion" = $1
+    `,
+    [Number(id_evaluacion)]
+  );
+  return rows[0] || null;
+}
+async function getSesionCfgById(id_sesion) {
+  const { rows } = await db.query(
+    `
+    SELECT se."id_sesion",
+           se."num_preg_max",
+           se."tiempo_limite_seg",
+           se."estado",
+           se."iniciado_en"
+    FROM "Sesion_evaluacion" se
+    WHERE se."id_sesion" = $1
+    `,
+    [Number(id_sesion)]
+  );
+  return rows[0] || null;
+}
+async function markSesionStartedIfNeeded(id_sesion) {
+  if (!Number.isFinite(Number(id_sesion))) return;
+  const { rows } = await db.query(
+    `SELECT "tiempo_limite_seg","iniciado_en" FROM "Sesion_evaluacion" WHERE "id_sesion"=$1`,
+    [Number(id_sesion)]
+  );
+  if (!rows.length) return;
+  const { tiempo_limite_seg, iniciado_en } = rows[0];
+
+  // Solo iniciar reloj si el límite es > 0
+  if (tiempo_limite_seg != null && Number(tiempo_limite_seg) > 0 && !iniciado_en) {
+    await db.query(
+      `UPDATE "Sesion_evaluacion" SET "iniciado_en" = NOW() WHERE "id_sesion"=$1`,
+      [Number(id_sesion)]
+    );
+  }
+}
+async function closeEvaluacionIfPossible(id_evaluacion) {
+  try {
+    const cols = await tableColumns("Evaluacion");
+    const hasFechaFinal = cols.some(c => c.name === "fecha_final");
+    if (hasFechaFinal) {
+      await db.query(
+        `UPDATE "Evaluacion" SET "fecha_final" = NOW() WHERE "id_evaluacion"=$1`,
+        [Number(id_evaluacion)]
+      );
+    }
+  } catch (e) {
+    warn("closeEvaluacionIfPossible:", e.message);
+  }
+}
+
+/* ==================================
    Helpers de dominio
 ================================== */
 
-// estándar más cercano al target
 async function getClosestStandard(id_materia, targetValorNum) {
   const { rows } = await db.query(
     `
@@ -63,7 +127,6 @@ async function getClosestStandard(id_materia, targetValorNum) {
   return rows[0] || null;
 }
 
-// siguiente/prev estándar
 async function stepStandard(id_materia, currentValor, dir) {
   if (dir === "up") {
     const { rows } = await db.query(
@@ -98,7 +161,6 @@ async function stepStandard(id_materia, currentValor, dir) {
   return { id_estandar: null, Valor: currentValor };
 }
 
-// preguntas ya mostradas en la evaluación
 async function getAskedQuestionIds(id_evaluacion) {
   const { rows } = await db.query(
     `SELECT "id_pregunta" FROM "Detalle_evaluacion" WHERE "id_evaluacion"=$1 ORDER BY 1`,
@@ -107,7 +169,6 @@ async function getAskedQuestionIds(id_evaluacion) {
   return rows.map(r => Number(r.id_pregunta));
 }
 
-// Valor estándar de una pregunta
 async function getValorFromPregunta(id_pregunta) {
   const { rows } = await db.query(
     `
@@ -121,7 +182,6 @@ async function getValorFromPregunta(id_pregunta) {
   return rows.length ? Number(rows[0].Valor) : null;
 }
 
-// Enunciado desde BD
 async function getEnunciado(id_pregunta) {
   const { rows } = await db.query(
     `SELECT "enunciado" FROM "Pregunta" WHERE "id_pregunta"=$1`,
@@ -231,7 +291,6 @@ async function isOptionCorrect(id_opcion, id_pregunta) {
   return false;
 }
 
-// temporada activa (o la más reciente)
 async function getTemporadaActivaId() {
   const { rows } = await db.query(
     `SELECT "id_temporada"
@@ -242,7 +301,6 @@ async function getTemporadaActivaId() {
   return rows.length ? Number(rows[0].id_temporada) : null;
 }
 
-// Busca una clase compatible (grado + materia)
 async function findClaseIdFor(id_grado, id_materia) {
   if (await hasColumns("Clase", ["id_clase"])) {
     const hasG = await hasColumns("Clase", ["id_grado"]);
@@ -369,7 +427,6 @@ async function ensureMatricula(carne_estudiante, id_materia) {
   }
 
   // 3) crear matrícula (llenando NOT NULL requeridos)
-  // Datos base del estudiante
   let id_estudiante_val = null;
   let id_grado_val = null;
 
@@ -394,7 +451,6 @@ async function ensureMatricula(carne_estudiante, id_materia) {
     }
   }
 
-  // ¿Matricula requiere id_clase o fecha_alta?
   const required = mCols.filter(c => c.required).map(c => c.name.toLowerCase());
   let id_clase_val = null;
 
@@ -409,24 +465,21 @@ async function ensureMatricula(carne_estudiante, id_materia) {
   }
 
   const now = new Date();
-
-  // construir payload según columnas existentes
   const values = {};
   const canUse = (n) => mSet.has(n.toLowerCase());
 
   if (canUse("id_estudiante") && id_estudiante_val != null) values.id_estudiante = id_estudiante_val;
-  if (canUse("id_temporada") && temporadaId != null) values.id_temporada = temporadaId;
+  if (canUse("id_temporada")) {
+    const temporadaId = await getTemporadaActivaId();
+    if (temporadaId != null) values.id_temporada = temporadaId;
+  }
   if (canUse("id_grado") && id_grado_val != null) values.id_grado = id_grado_val;
   if (canUse("carne_estudiante")) values.carne_estudiante = carne;
   if (canUse("carne_est")) values.carne_est = carne;
-
   if (canUse("id_clase") && id_clase_val != null) values.id_clase = id_clase_val;
-
-  // fecha de alta / matrícula (según exista)
   if (canUse("fecha_alta")) values.fecha_alta = now;
   else if (canUse("fecha_matricula")) values.fecha_matricula = now;
 
-  // verificar NOT NULL sin default
   const missing = required.filter(r => values[r] === undefined);
   if (missing.length) {
     throw Object.assign(
@@ -462,7 +515,6 @@ async function createEvaluacionFlex({ carne_est, id_materia, id_sesion }) {
 
   addIf("id_materia", Number(id_materia));
   addIf("fecha_inicio", new Date());
-
   if (set.has("carne_est")) addIf("carne_est", String(carne_est));
   if (set.has("carne_estudiante")) addIf("carne_estudiante", String(carne_est));
 
@@ -473,12 +525,9 @@ async function createEvaluacionFlex({ carne_est, id_materia, id_sesion }) {
     }
     if (tmpId != null) values.id_temporada = tmpId;
   }
-
   if (set.has("id_matricula")) {
     values.id_matricula = await ensureMatricula(String(carne_est), Number(id_materia));
   }
-
-  // id_sesion: incluir SOLO si existe la columna, viene un número y la FK existe
   if (set.has("id_sesion") && Number.isFinite(Number(id_sesion)) && (await existsSesion(id_sesion))) {
     values.id_sesion = Number(id_sesion);
   }
@@ -575,8 +624,17 @@ async function startSession(req, res) {
     const id_evaluacion = await createEvaluacionFlex({
       carne_est: String(carne_estudiante),
       id_materia: Number(id_materia),
-      id_sesion: id_sesion, // <-- importante: nada de 0 por defecto
+      id_sesion: id_sesion,
     });
+
+    // Activar reloj de sesión si aplica (modo tiempo > 0)
+    try {
+      if (Number.isFinite(Number(id_sesion))) {
+        await markSesionStartedIfNeeded(id_sesion);
+      }
+    } catch (e) {
+      warn("markSesionStartedIfNeeded:", e.message);
+    }
 
     // registra primera pregunta mostrada
     const { rows: cRows } = await db.query(
@@ -598,6 +656,19 @@ async function startSession(req, res) {
     const opciones  = await loadOptionsFromDB(Number(firstQ.id_pregunta));
     const enunciado = firstQ.enunciado || (await getEnunciado(Number(firstQ.id_pregunta)));
 
+    // Devolver límites efectivos de la sesión si existen
+    let cfg = null;
+    try {
+      if (Number.isFinite(Number(id_sesion))) cfg = await getSesionCfgById(id_sesion);
+    } catch (e) { warn("getSesionCfgById:", e.message); }
+
+    // num_preguntas efectivo (>0) o null
+    const cfgMax  = Number(cfg?.num_preg_max);
+    const bodyMax = Number(num_preg_max);
+    const effectiveMax =
+      (Number.isFinite(cfgMax)  && cfgMax  > 0) ? cfgMax  :
+      (Number.isFinite(bodyMax) && bodyMax > 0) ? bodyMax : null;
+
     return res.json({
       ok: true,
       id_evaluacion,
@@ -607,7 +678,10 @@ async function startSession(req, res) {
         enunciado,
         opciones,
       },
-      num_preg_max: Number(num_preg_max || 10),
+      num_preg_max: effectiveMax, // null = sin límite por número
+      // tiempo solo si > 0
+      tiempo_limite_seg: (cfg && Number(cfg.tiempo_limite_seg) > 0) ? Number(cfg.tiempo_limite_seg) : null,
+      estado_sesion: cfg?.estado ?? null,
     });
   } catch (err) {
     warn("start error:", err);
@@ -621,7 +695,7 @@ async function startSession(req, res) {
  * Acepta:
  *  - params.id como id_evaluacion  (modo antiguo)
  *  - o body.evaluacionId/id_evaluacion (modo nuevo)
- * Body: { id_pregunta, id_opcion, id_materia, valor_estandar_actual, tiempo_respuesta }
+ * Body: { id_pregunta, id_opcion, id_materia, valor_estandar_actual, tiempo_respuesta, [num_preg_max] }
  */
 async function submitAnswer(req, res) {
   try {
@@ -659,7 +733,56 @@ async function submitAnswer(req, res) {
       }
     } catch {}
 
-    // mover dificultad (2 seguidas bien -> sube, 2 seguidas mal -> baja)
+    // === APLICAR MODOS (tiempo, número, cierre por docente)
+    let cfg = null;
+    try {
+      cfg = await getSesionCfgByEvaluacion(id_evaluacion);
+    } catch (e) {
+      warn("getSesionCfgByEvaluacion:", e.message);
+    }
+
+    // 0) Cierre por docente (tolerante a variantes)
+    const estado = (cfg?.estado || "").toString().trim().toLowerCase();
+    if (["cerrada","cerrado","cancelada","cancelado","finalizada","finalizado","terminada","terminado"].includes(estado)) {
+      await closeEvaluacionIfPossible(id_evaluacion);
+      return res.json({ ok: true, correcta, finished: true, reason: "sesion_cerrada", question: null });
+    }
+
+    // 1) Límite de tiempo  -> solo si > 0 y hay iniciado_en
+    if (cfg?.tiempo_limite_seg != null && Number(cfg.tiempo_limite_seg) > 0 && cfg?.iniciado_en) {
+      const { rows: tnow } = await db.query(`SELECT NOW() as now`);
+      const now = new Date(tnow[0].now);
+      const started = new Date(cfg.iniciado_en);
+      const elapsedSec = Math.floor((now.getTime() - started.getTime()) / 1000);
+      if (elapsedSec >= Number(cfg.tiempo_limite_seg)) {
+        await closeEvaluacionIfPossible(id_evaluacion);
+        return res.json({ ok: true, correcta, finished: true, reason: "timeout", question: null });
+      }
+    }
+
+    // 2) Límite de número de preguntas -> usar solo si > 0
+    let maxQ = null;
+    const cfgMax = Number(cfg?.num_preg_max);
+    if (Number.isFinite(cfgMax) && cfgMax > 0) {
+      maxQ = cfgMax;
+    } else {
+      const bodyMax = Number(req.body?.num_preg_max);
+      if (Number.isFinite(bodyMax) && bodyMax > 0) maxQ = bodyMax;
+    }
+
+    if (maxQ != null) {
+      const { rows: cRows } = await db.query(
+        `SELECT COUNT(1) AS c FROM "Detalle_evaluacion" WHERE "id_evaluacion"=$1`,
+        [id_evaluacion]
+      );
+      const yaMostradas = Number(cRows[0].c) || 0;
+      if (yaMostradas >= maxQ) {
+        await closeEvaluacionIfPossible(id_evaluacion);
+        return res.json({ ok:true, correcta, finished:true, reason:"max_preguntas", question:null });
+      }
+    }
+
+    // === Lógica adaptativa (subir/bajar dificultad)
     let twoRight=false, twoWrong=false;
     try {
       const { rows } = await db.query(
@@ -695,6 +818,7 @@ async function submitAnswer(req, res) {
     } catch {}
 
     if (!nextQ) {
+      // Fallback SQL más robusto para exclusión
       const { rows } = await db.query(
         `
         SELECT p."id_pregunta", p."enunciado", e."Valor"::numeric AS valor_estandar
@@ -703,13 +827,15 @@ async function submitAnswer(req, res) {
         JOIN "Tema" t ON t."id_tema"=e."id_tema"
         JOIN "Area" a ON a."id_area"=t."id_area"
         WHERE a."id_materia"=$1
-          AND (COALESCE($3::int[], '{}')='{}' OR NOT (p."id_pregunta" = ANY($3)))
+          AND NOT (p."id_pregunta" = ANY(COALESCE($3::int[], ARRAY[]::int[])))
         ORDER BY ABS(e."Valor"::numeric - $2::numeric) ASC, p."id_pregunta" ASC
         LIMIT 1
         `,
         [Number(id_materia), targetValor, exclude.length ? exclude : null]
       );
-      if (rows.length) nextQ = { id_pregunta: Number(rows[0].id_pregunta), enunciado: rows[0].enunciado };
+      if (rows.length) {
+        nextQ = { id_pregunta: Number(rows[0].id_pregunta), enunciado: rows[0].enunciado };
+      }
     }
 
     if (!nextQ) {

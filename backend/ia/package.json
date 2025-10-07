@@ -1,0 +1,17 @@
+{
+  "name": "somaedu-ia",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cross-env PORT=3002 nodemon App.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "nodemon": "^3.1.10"
+  }
+}
