@@ -1,0 +1,148 @@
+/* =========================
+   Login – Dark Matte (sin brillos)
+   Scope: solo .login-page
+   ========================= */
+.login-page{
+  --bg:#0b1020;
+  --card:#0f1627;
+  --text:#e9eefc;
+  --muted:#9aa4c6;
+  --border:#1f274a;
+  --primary:#5b77ff;
+  --primary-600:#4963f5;
+  --radius:18px;
+
+  min-height:100dvh;
+  display:grid;
+  place-items:center;
+  padding:clamp(16px,3vw,32px);
+  color:var(--text);
+  background:
+    radial-gradient(1200px 700px at 80% -40%, rgba(108,139,255,.12), transparent 55%),
+    radial-gradient(1100px 650px at 10% -10%, rgba(30,194,139,.08), transparent 60%),
+    linear-gradient(180deg, #0b1020, #0a1124);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+}
+
+/* Card principal: mate, sin glow */
+.login-page .login-card{
+  width:min(480px,92vw);
+  border-radius:var(--radius);
+  padding:32px 26px 28px;
+  background: var(--card);
+  border:1px solid var(--border);
+  box-shadow: none; /* ⬅️ sin sombras */
+}
+
+/* Avatar discreto, sin halo */
+.login-page .login-avatar{
+  width:100px;height:100px;margin:0 auto 10px;
+  border-radius:999px;
+  display:grid;place-items:center;
+  background:#16213a;
+  box-shadow:none;
+  border:1px solid #1a2540;
+}
+
+/* Título plano (sin degradados) */
+.login-page .login-title{
+  text-align:center;
+  margin:10px 0 18px;
+  font-weight:800;
+  letter-spacing:.4px;
+  color:#aebdff;
+}
+
+/* Form: limpio, sin panel extra */
+.login-page .login-form{
+  background: transparent;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+}
+
+/* ===== Inputs tipo "pill" mates (sin brillo) ===== */
+.login-page .input-group{
+  display:grid;
+  grid-template-columns:42px 1fr;
+  align-items:center;
+  gap:8px;
+
+  border-radius:999px;         /* pill */
+  padding:6px;
+  margin-bottom:14px;
+  background:#121b33;          /* mate oscuro */
+  border:1px solid #24304d;    /* borde sutil */
+  box-shadow:none;             /* ⬅️ sin sombra */
+  transition:border-color .15s ease, background-color .15s ease;
+}
+.login-page .input-group:hover{
+  border-color:#2f3c61;
+}
+.login-page .input-group:focus-within{
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(91,119,255,.18); /* anillo mínimo */
+}
+
+/* Ícono redondo, mate */
+.login-page .input-icon{
+  display:grid;place-items:center;
+  width:36px;height:36px;border-radius:999px;
+  background:#0e1529;
+  color:#c8d1ff;
+  border:1px solid #1c2848;
+  box-shadow:none;
+}
+
+/* Input: transparente (no más blanco), sin borde */
+.login-page input[type="email"],
+.login-page input[type="text"],
+.login-page input[type="password"]{
+  height:36px;
+  border:0;
+  background: transparent !important; /* ⬅️ fuerza a ser transparente */
+  color:#eaf0ff;
+  padding:0 14px 0 6px;
+  outline:none;
+  font-size:14.5px;
+  font-weight:500;
+  caret-color:#eaf0ff;
+}
+.login-page input::placeholder{
+  color:#b8c1e6;
+  opacity:.9;
+}
+
+/* Fix autofill (Chrome) que pinta blanco/amarillo */
+.login-page input:-webkit-autofill,
+.login-page input:-webkit-autofill:hover,
+.login-page input:-webkit-autofill:focus{
+  -webkit-text-fill-color:#eaf0ff !important;
+  transition: background-color 9999s ease-out 0s;
+  box-shadow: 0 0 0px 1000px #121b33 inset !important; /* mismo color del pill */
+  caret-color:#eaf0ff;
+}
+
+/* Botón primario: sólido, sin brillo/gradientes fuertes */
+.login-page .login-btn{
+  width:100%; margin-top:12px;
+  padding:12px 14px; border-radius:12px;
+  font-weight:800; letter-spacing:.4px;
+  color:#fff; cursor:pointer;
+  background: var(--primary);
+  border:1px solid var(--primary-600);
+  box-shadow:none;             /* ⬅️ sin glow */
+  transition: background-color .12s ease, transform .06s ease;
+}
+.login-page .login-btn:hover{ background:#6a85ff; }
+.login-page .login-btn:active{ transform:translateY(0); }
+
+/* Mensajes de error */
+.login-page .error,
+.login-page .server-error{ color:#ff6b6b; }
+
+/* Preferencia de movimiento reducido */
+@media (prefers-reduced-motion: reduce){
+  .login-page .input-group,
+  .login-page .login-btn{ transition:none; }
+}

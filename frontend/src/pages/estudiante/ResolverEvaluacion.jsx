@@ -1,10 +1,10 @@
 // src/pages/estudiante/ResolverEvaluacion.jsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import styles from "./ResolverEvaluacion.module.css"; // ⬅️ módulo, NO global
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
-// LOGS (pon en false si no quieres ver en consola)
 const DBG  = true;
 const log  = (...a) => DBG && console.log("[RESOLVER]", ...a);
 const warn = (...a) => DBG && console.warn("[RESOLVER]", ...a);
@@ -37,18 +37,23 @@ export default function ResolverEvaluacion() {
   const [idMateria, setIdMateria]       = useState(null);
   const [idEvaluacion, setIdEvaluacion] = useState(null);
   const [valorStd, setValorStd]         = useState(0);
-  const [numMax, setNumMax]             = useState(10);
+
+  const [numMax, setNumMax]             = useState(null);
   const [numActual, setNumActual]       = useState(0);
   const [finished, setFinished]         = useState(false);
 
-  // Pregunta actual
   const [question, setQuestion] = useState(null);
   const [selected, setSelected] = useState(null);
 
-  // Toma de tiempo por pregunta
+  const [lastAnswer, setLastAnswer] = useState(null); // {id_opcion, correcta}
+  const [showFeedback, setShowFeedback] = useState(false);
+
+  const [tiempoTotalSeg, setTiempoTotalSeg] = useState(null);
+  const [tiempoRestanteSeg, setTiempoRestanteSeg] = useState(null);
+  const timerRef = useRef(null);
+
   const startTickRef = useRef(Date.now());
 
-  // -------- helpers --------
   const fetchJSON = useCallback(async (url, opts = {}) => {
     const r = await fetch(url, {
       headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
@@ -61,21 +66,26 @@ export default function ResolverEvaluacion() {
     return data;
   }, []);
 
-  // Normalización de la pregunta que viene del backend
-  const normalizeQuestion = useCallback((qRaw) => {
-    if (!qRaw) return null;
-    const q = {
-      id_pregunta: qRaw.id_pregunta ?? qRaw.id ?? qRaw.question_id,
-      enunciado:   qRaw.enunciado   ?? qRaw.texto ?? qRaw.text ?? "Enunciado no disponible",
-      opciones:    (qRaw.opciones   ?? qRaw.options ?? []).map((o) => ({
-        id_opcion: o.id_opcion ?? o.id ?? o.value,
-        texto:     o.texto     ?? o.label ?? o.descripcion ?? o.text ?? "Opción",
-      })),
-    };
-    return q?.id_pregunta ? q : null;
+  const formatMMSS = useCallback((s) => {
+    if (s == null) return null;
+    const sec = Math.max(0, s|0);
+    const mm = String(Math.floor(sec/60)).padStart(2,"0");
+    const ss = String(sec%60).padStart(2,"0");
+    return `${mm}:${ss}`;
   }, []);
 
-  // 1) Obtener meta de sesión (id_materia y num_preg_max) desde el backend
+  const normalizeQuestion = useCallback((qRaw) => {
+    if (!qRaw) return null;
+    return {
+      id_pregunta: qRaw.id_pregunta ?? qRaw.id ?? qRaw.question_id,
+      enunciado:   qRaw.enunciado   ?? qRaw.texto ?? qRaw.text ?? "Enunciado no disponible",
+      opciones:    (qRaw.opciones ?? qRaw.options ?? []).map((o) => ({
+        id_opcion: o.id_opcion ?? o.id ?? o.value,
+        texto:     o.texto ?? o.label ?? o.descripcion ?? o.text ?? "Opción",
+      })),
+    };
+  }, []);
+
   const fetchSessionMeta = useCallback(async () => {
     const endpoints = [
       `${API}/api/estudiante/evaluaciones?userId=${idUsuario ?? ""}`,
@@ -84,60 +94,46 @@ export default function ResolverEvaluacion() {
     for (const url of endpoints) {
       try {
         const j = await fetchJSON(url);
-        const raw = j.items ?? j.data ?? j ?? [];
-        const arr = Array.isArray(raw) ? raw : [];
+        const arr = Array.isArray(j.items ?? j.data ?? j) ? (j.items ?? j.data ?? j) : [];
         const match = arr.find((x) => {
           const ids = [x.id, x.id_sesion, x.sessionId, x.sesion_id].filter((v) => v != null);
           return ids.some((v) => Number(v) === sid);
         });
         if (match) {
           const materia = match.id_materia ?? match.materia_id ?? null;
-          const nmax    = match.num_preg_max ?? match.num_preguntas ?? 10;
+          const nmax    = match.num_preg_max ?? match.num_preguntas ?? null;
           if (materia != null) {
-            log("meta detectada:", { id_materia: materia, num_preg_max: nmax });
-            return { id_materia: Number(materia), num_preg_max: Number(nmax) };
+            return {
+              id_materia: Number(materia),
+              num_preg_max: (nmax != null && Number(nmax) > 0) ? Number(nmax) : null
+            };
           }
         }
-      } catch (e) {
-        warn("falló meta desde", url, e);
-      }
+      } catch (e) { warn("falló meta desde", url, e); }
     }
     throw new Error("No se encontró id_materia para la sesión.");
   }, [API, idUsuario, carne, sid, fetchJSON]);
 
-  // 2) Iniciar sesión adaptativa y mostrar primera pregunta
   const startAndLoadFirst = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    setFinished(false);
-    setQuestion(null);
-    setSelected(null);
-    setNumActual(0);
-    try {
-      // (A) marcar sala en curso (best-effort)
-      try {
-        await fetch(`${API}/api/waitroom/${sid}/start`, { method: "POST" });
-      } catch (e) {
-        warn("waitroom.start no crítico:", e.message);
-      }
+    setLoading(true); setError(""); setFinished(false);
+    setQuestion(null); setSelected(null); setLastAnswer(null); setShowFeedback(false);
+    setNumActual(0); setTiempoTotalSeg(null); setTiempoRestanteSeg(null);
+    clearInterval(timerRef.current);
 
-      // (B) meta
+    try {
+      try { await fetch(`${API}/api/waitroom/${sid}/start`, { method: "POST" }); } catch (e) { warn("waitroom.start:", e.message); }
       const meta = await fetchSessionMeta();
       setIdMateria(meta.id_materia);
       setNumMax(meta.num_preg_max);
 
-      // (C) iniciar adaptativo — PASAMOS id_sesion para evitar FK inválida
       const body = {
         carne_estudiante: String(estudianteId),
         id_materia: meta.id_materia,
-        num_preg_max: meta.num_preg_max,
+        num_preg_max: meta.num_preg_max ?? undefined,
         id_sesion: Number.isFinite(sid) ? sid : undefined,
-        sessionId: Number.isFinite(sid) ? sid : undefined, // compat
+        sessionId: Number.isFinite(sid) ? sid : undefined,
       };
-      const startRes = await fetchJSON(`${API}/api/adaptative/session/start`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const startRes = await fetchJSON(`${API}/api/adaptative/session/start`, { method: "POST", body: JSON.stringify(body) });
 
       const q = normalizeQuestion(startRes?.question || startRes?.data?.question || startRes?.data);
       if (!q) throw new Error("El servidor no devolvió una pregunta inicial.");
@@ -148,18 +144,28 @@ export default function ResolverEvaluacion() {
       setSelected(null);
       setNumActual(1);
       startTickRef.current = Date.now();
+
+      const tlim = startRes?.tiempo_limite_seg;
+      if (tlim != null && Number(tlim) > 0) {
+        setTiempoTotalSeg(Number(tlim));
+        setTiempoRestanteSeg(Number(tlim));
+        timerRef.current = setInterval(() => {
+          setTiempoRestanteSeg((s) => {
+            if (s == null) return s;
+            if (s <= 1) { clearInterval(timerRef.current); return 0; }
+            return s - 1;
+          });
+        }, 1000);
+      }
     } catch (e) {
       setError(e.message || "No se pudo iniciar la evaluación.");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, [API, sid, estudianteId, fetchJSON, fetchSessionMeta, normalizeQuestion]);
 
-  // 3) Enviar respuesta y cargar siguiente
   const submitAnswer = useCallback(async () => {
     if (!question || selected == null || !idEvaluacion || !idMateria) return;
-    setSubmitting(true);
-    setError("");
+    if (showFeedback) return;
+    setSubmitting(true); setError("");
 
     try {
       const elapsedSec = Math.max(0, Math.round((Date.now() - startTickRef.current) / 1000));
@@ -177,66 +183,80 @@ export default function ResolverEvaluacion() {
         body: JSON.stringify(body),
       });
 
-      // ¿terminó?
+      setLastAnswer({ id_opcion: Number(selected), correcta: !!ans.correcta });
+      setShowFeedback(true);
+
       if (ans.finished) {
-        setFinished(true);
-        setQuestion(null);
-        setSelected(null);
-        try {
-          await fetchJSON(`${API}/api/adaptative/session/${idEvaluacion}/end`, { method: "POST" });
-        } catch (e) {
-          warn("end no crítico:", e.message);
-        }
+        await new Promise(r => setTimeout(r, 800));
+        setFinished(true); setQuestion(null); setSelected(null); setShowFeedback(false);
+        try { await fetchJSON(`${API}/api/adaptative/session/${idEvaluacion}/end`, { method: "POST" }); } catch (e) { warn("end:", e.message); }
         return;
       }
 
-      // Siguiente
       const nextQ = normalizeQuestion(ans.question);
       if (!nextQ) {
-        setFinished(true);
-        setQuestion(null);
-        setSelected(null);
-        try {
-          await fetchJSON(`${API}/api/adaptative/session/${idEvaluacion}/end`, { method: "POST" });
-        } catch {}
+        await new Promise(r => setTimeout(r, 800));
+        setFinished(true); setQuestion(null); setSelected(null); setShowFeedback(false);
+        try { await fetchJSON(`${API}/api/adaptative/session/${idEvaluacion}/end`, { method: "POST" }); } catch {}
         return;
       }
 
+      await new Promise(r => setTimeout(r, 700));
       setValorStd(Number(ans.valor_estandar ?? valorStd));
       setQuestion(nextQ);
       setSelected(null);
       setNumActual((n) => n + 1);
+      setShowFeedback(false);
       startTickRef.current = Date.now();
     } catch (e) {
       setError(e.message || "No se pudo enviar la respuesta.");
-    } finally {
-      setSubmitting(false);
-    }
-  }, [API, fetchJSON, idEvaluacion, idMateria, question, selected, valorStd, normalizeQuestion]);
+      setShowFeedback(false);
+    } finally { setSubmitting(false); }
+  }, [API, fetchJSON, idEvaluacion, idMateria, question, selected, valorStd, normalizeQuestion, showFeedback]);
 
-  // Atajo de teclado: Enter envía si hay selección
+  const handleEnd = useCallback(async () => {
+    if (idEvaluacion) {
+      try { await fetchJSON(`${API}/api/adaptative/session/${idEvaluacion}/end`, { method: "POST" }); } catch (e) { warn("end:", e.message); }
+    }
+    setFinished(true); setQuestion(null); setSelected(null); setShowFeedback(false);
+    clearInterval(timerRef.current);
+  }, [API, idEvaluacion, fetchJSON]);
+
+  useEffect(() => {
+    if (tiempoRestanteSeg === 0 && !finished) handleEnd();
+  }, [tiempoRestanteSeg, finished, handleEnd]);
+
   useEffect(() => {
     const onKey = (ev) => {
-      if (ev.key === "Enter" && !loading && !submitting && question && selected != null) {
+      if (ev.key === "Enter" && !loading && !submitting && question && selected != null && !showFeedback) {
         submitAnswer();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [loading, submitting, question, selected, submitAnswer]);
+  }, [loading, submitting, question, selected, submitAnswer, showFeedback]);
 
-  // --- UI: si no hay identidad, muestra aviso ---
+  useEffect(() => () => clearInterval(timerRef.current), []);
+
+  const progressPct = useMemo(() => {
+    if (!numMax || numMax <= 0) return 0;
+    const pct = Math.min(100, Math.max(0, ((numActual - 1) / numMax) * 100));
+    return pct.toFixed(2);
+  }, [numActual, numMax]);
+
   if (!estudianteId) {
     return (
-      <div className="page">
-        <header className="page-header">
-          <h1>Resolver evaluación</h1>
-          <div className="muted">Sesión #{sid}</div>
-        </header>
-        <div className="card error">
-          No hay sesión de estudiante válida. Inicia sesión nuevamente.
-          <div style={{ marginTop: 12 }}>
-            <button className="btn" onClick={() => navigate("/")}>Ir a Login</button>
+      <div className={styles.page}>
+        <div className={styles.card}>
+          <header className={styles.header}>
+            <h1 className={styles.title}>Resolver evaluación</h1>
+            <span className={styles.chip}>Sesión #{sid}</span>
+          </header>
+          <div className={`${styles.panel} ${styles.alertError}`}>
+            No hay sesión de estudiante válida. Inicia sesión nuevamente.
+            <div style={{ marginTop: 12 }}>
+              <button className={styles.btn} onClick={() => navigate("/")}>Ir a Login</button>
+            </div>
           </div>
         </div>
       </div>
@@ -244,86 +264,117 @@ export default function ResolverEvaluacion() {
   }
 
   return (
-    <div className="page" data-testid="resolver-page">
-      <header className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <div>
-          <h1>Resolver evaluación</h1>
-          <div className="muted">Sesión #{sid}</div>
+    <div className={styles.page} data-testid="resolver-page">
+      <div className={styles.card}>
+        <header className={styles.header}>
+          <h1 className={styles.title}>Resolviendo evaluación</h1>
+          <div className={styles.meta}>
+            {numActual > 0 && !finished && (
+              <span className={styles.chip}>Pregunta {numActual}{numMax ? ` / ${numMax}` : ""}</span>
+            )}
+            <span className={styles.chip}>Valor: {Number(valorStd ?? 0).toFixed(2)}</span>
+            {tiempoTotalSeg != null && (
+              <span className={`${styles.chip} ${styles.timer}`}>⏱ {formatMMSS(tiempoRestanteSeg)}</span>
+            )}
+          </div>
+        </header>
+
+        <div className={styles.progress} style={{["--progress"]: `${progressPct}%`}}>
+          <div className={styles.progressBar} />
         </div>
-        {idMateria != null && (
-          <div className="muted" title="Progreso">
-            {numActual > 0 && !finished ? `Pregunta ${numActual}${numMax ? ` / ${numMax}` : ""}` : null}
-          </div>
+
+        {loading && <div className={styles.panel}>Preparando evaluación…</div>}
+        {error && <div className={`${styles.panel} ${styles.alertError}`}>{error}</div>}
+        {finished && (
+          <section className={`${styles.panel} ${styles.alertSuccess}`} style={{marginTop: 10}}>
+            <h3 style={{ marginTop: 0 }}>¡Sesión finalizada!</h3>
+            <p>Gracias por participar.</p>
+            <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+              <button className={styles.btn} onClick={() => navigate(-1)}>Volver</button>
+            </div>
+          </section>
         )}
-      </header>
 
-      {loading && <div className="card">Preparando evaluación…</div>}
-      {error && <div className="card error">{error}</div>}
-      {finished && (
-        <section className="card success">
-          <h3 style={{ marginTop: 0 }}>¡Sesión finalizada!</h3>
-          <p>Gracias por participar.</p>
-          <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-            <button className="btn" onClick={() => navigate(-1)}>Volver</button>
-          </div>
-        </section>
-      )}
+        {!loading && !error && !finished && (
+          <>
+            {!question ? (
+              <section className={styles.panel} style={{marginTop: 10}}>
+                <p>
+                  Presiona <strong>Comenzar</strong> para cargar la primera pregunta desde el módulo adaptativo.
+                </p>
+                <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
+                  <button className={styles.btn} onClick={() => navigate(-1)}>Volver</button>
+                  <button className={`${styles.btn} ${styles.btnPrimary}`} onClick={startAndLoadFirst}>Comenzar</button>
+                </div>
+              </section>
+            ) : (
+              <>
+                <section className={styles.question}>
+                  <div className={styles.questionIndex}>Pregunta #{numActual}</div>
+                  <div className={styles.questionText}>{question.enunciado}</div>
 
-      {!loading && !error && !finished && (
-        <>
-          {!question ? (
-            <section className="card">
-              <p>
-                Presiona <strong>Comenzar</strong> para cargar la primera pregunta desde el módulo adaptativo.
-              </p>
-              <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-                <button className="btn" onClick={() => navigate(-1)}>Volver</button>
-                <button className="btn primary" onClick={startAndLoadFirst}>Comenzar</button>
-              </div>
-            </section>
-          ) : (
-            <section className="card">
-              <h3 style={{ marginTop: 0 }}>{question.enunciado}</h3>
+                  <div className={styles.options}>
+                    {question.opciones.map((op) => {
+                      const isSelected = String(selected) === String(op.id_opcion);
+                      const isCorrect = showFeedback && lastAnswer?.id_opcion === op.id_opcion && lastAnswer?.correcta === true;
+                      const isWrong   = showFeedback && lastAnswer?.id_opcion === op.id_opcion && lastAnswer?.correcta === false;
 
-              <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-                {question.opciones.map((op) => (
-                  <label
-                    key={op.id_opcion}
-                    className="radio-row"
-                    style={{
-                      padding: "10px 12px",
-                      border: "1px solid #2b3345",
-                      borderRadius: 8,
-                      cursor: "pointer",
-                      userSelect: "none",
-                    }}
-                    onClick={() => setSelected(op.id_opcion)}
-                  >
-                    <input
-                      type="radio"
-                      name="opt"
-                      checked={String(selected) === String(op.id_opcion)}
-                      onChange={() => setSelected(op.id_opcion)}
-                    />
-                    <span style={{ marginLeft: 8 }}>{op.texto}</span>
-                  </label>
-                ))}
-              </div>
+                      return (
+                        <label
+                          key={op.id_opcion}
+                          className={[
+                            styles.option,
+                            isSelected && styles.optionSelected,
+                            isCorrect && styles.optionCorrect,
+                            isWrong   && styles.optionWrong
+                          ].filter(Boolean).join(" ")}
+                          onClick={() => !submitting && !showFeedback && setSelected(op.id_opcion)}
+                        >
+                          <input
+                            type="radio"
+                            name="answer"
+                            checked={isSelected}
+                            onChange={() => setSelected(op.id_opcion)}
+                            disabled={submitting || showFeedback}
+                          />
+                          <div className={styles.optionText}>{op.texto}</div>
+                          {isCorrect && <span className={styles.optionBadge}>Correcta</span>}
+                          {isWrong   && <span className={styles.optionBadge}>Incorrecta</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </section>
 
-              <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-                <button className="btn" onClick={() => navigate(-1)} disabled={submitting}>Volver</button>
-                <button
-                  className="btn primary"
-                  disabled={selected == null || submitting}
-                  onClick={submitAnswer}
-                  title={selected == null ? "Selecciona una opción" : "Enviar respuesta"}
-                >
-                  {submitting ? "Enviando…" : "Enviar"}
-                </button>
-              </div>
-            </section>
-          )}
-        </>
+                <footer className={styles.footer}>
+                  <span className={styles.helper}>
+                    {numMax ? `${numActual} de ${numMax}` : `Pregunta ${numActual}`}
+                  </span>
+                  <div>
+                    <button className={`${styles.btn} ${styles.btnGhost}`} onClick={handleEnd} disabled={submitting || showFeedback}>
+                      Finalizar
+                    </button>
+                    <button
+                      className={`${styles.btn} ${styles.btnPrimary}`}
+                      style={{marginLeft: 8}}
+                      disabled={selected == null || submitting || showFeedback}
+                      onClick={submitAnswer}
+                      title={selected == null ? "Selecciona una opción" : "Enviar respuesta"}
+                    >
+                      {submitting ? "Enviando…" : "Enviar"}
+                    </button>
+                  </div>
+                </footer>
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {showFeedback && (
+        <div className={`${styles.toast} ${lastAnswer?.correcta ? styles.toastOk : styles.toastErr}`}>
+          {lastAnswer?.correcta ? "✅ ¡Respuesta correcta!" : "❌ Respuesta incorrecta"}
+        </div>
       )}
     </div>
   );
