@@ -37,24 +37,26 @@ router.get("/", (req, res) => res.json({ ok: true, msg: "adaptive ok" }));
 /**
  * Inicia sesión adaptativa y devuelve la 1ª pregunta
  * Body:
- *  - carne_estudiante: string | number
- *  - id_materia: number
- *  - num_preg_max: number
- *
- * Nota: este endpoint inicia la lógica adaptativa y debe retornar
- * la primera pregunta según tu controlador (AdaptiveController.startSession).
+ *  - carne_estudiante: string | number   (obligatorio)
+ *  - id_materia: number                  (obligatorio)
+ *  - num_preg_max: number                (opcional)
+ *  - id_sesion: number                   (opcional)
  */
 router.post(
   "/session/start",
   // requireAuth, // <- si tienes middleware de auth, actívalo aquí
-  must("carne_estudiante", "id_materia", "num_preg_max"),
+  must("carne_estudiante", "id_materia"),
   asyncH(async (req, res) => {
-    // Logs útiles
     console.log("[ADAPTIVE] POST /session/start body =", req.body);
 
     // Normaliza tipos numéricos si fuera necesario
     req.body.id_materia = asNum(req.body.id_materia);
-    req.body.num_preg_max = asNum(req.body.num_preg_max);
+    if (req.body.num_preg_max !== undefined) {
+      req.body.num_preg_max = asNum(req.body.num_preg_max);
+    }
+    if (req.body.id_sesion !== undefined) {
+      req.body.id_sesion = asNum(req.body.id_sesion);
+    }
 
     return AdaptiveController.startSession(req, res);
   })
@@ -65,17 +67,17 @@ router.post(
  * Params:
  *  - :id = id_evaluacion (numérico)
  * Body:
- *  - id_pregunta: number
- *  - id_opcion: number
- *  - id_materia: number
- *  - valor_estandar_actual: number (ej. habilidad/θ estimada actual)
- *
- * El controlador deberá responder con la siguiente pregunta o indicar fin.
+ *  - id_pregunta: number                 (obligatorio)
+ *  - id_opcion: number                   (obligatorio)
+ *  - id_materia: number                  (obligatorio)
+ *  - valor_estandar_actual: number       (opcional)
+ *  - tiempo_respuesta: number (segundos) (opcional)
+ *  - num_preg_max: number                (opcional)
  */
 router.post(
   "/session/:id/answer",
   // requireAuth,
-  must("id_pregunta", "id_opcion", "id_materia", "valor_estandar_actual"),
+  must("id_pregunta", "id_opcion", "id_materia"),
   asyncH(async (req, res) => {
     console.log("[ADAPTIVE] POST /session/:id/answer params =", req.params);
     console.log("[ADAPTIVE] POST /session/:id/answer body   =", req.body);
@@ -85,7 +87,15 @@ router.post(
     req.body.id_pregunta = asNum(req.body.id_pregunta);
     req.body.id_opcion = asNum(req.body.id_opcion);
     req.body.id_materia = asNum(req.body.id_materia);
-    req.body.valor_estandar_actual = Number(req.body.valor_estandar_actual);
+    if (req.body.valor_estandar_actual !== undefined) {
+      req.body.valor_estandar_actual = asNum(req.body.valor_estandar_actual);
+    }
+    if (req.body.tiempo_respuesta !== undefined) {
+      req.body.tiempo_respuesta = asNum(req.body.tiempo_respuesta);
+    }
+    if (req.body.num_preg_max !== undefined) {
+      req.body.num_preg_max = asNum(req.body.num_preg_max);
+    }
 
     return AdaptiveController.submitAnswer(req, res);
   })
@@ -103,6 +113,21 @@ router.post(
     console.log("[ADAPTIVE] POST /session/:id/end params =", req.params);
     req.params.id = asNum(req.params.id);
     return AdaptiveController.endSession(req, res);
+  })
+);
+
+/**
+ * Obtiene notas por área para una evaluación
+ * Params:
+ *  - :id = id_evaluacion (numérico)
+ */
+router.get(
+  "/session/:id/areas",
+  // requireAuth,
+  asyncH(async (req, res) => {
+    console.log("[ADAPTIVE] GET /session/:id/areas params =", req.params);
+    req.params.id = asNum(req.params.id);
+    return AdaptiveController.areasByEvaluacion(req, res);
   })
 );
 

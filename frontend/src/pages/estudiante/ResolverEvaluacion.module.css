@@ -1,5 +1,9 @@
-/* Variables locales: solo aplican dentro de .page */
-.page{
+/* ===============================
+   ResolverEvaluacion (scoped)
+   =============================== */
+
+/* Variables y layout base */
+.resolver-ctx{
   --bg: #0b1020;
   --card: #0e1428;
   --text: #e9eefc;
@@ -26,7 +30,8 @@
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans";
 }
 
-.card{
+/* Tarjetas y tipografía */
+.resolver-ctx .card{
   width: min(980px, 100%);
   background: var(--card);
   border: 1px solid var(--border);
@@ -34,174 +39,201 @@
   box-shadow: var(--shadow);
   padding: clamp(18px, 3vw, 28px);
 }
+.resolver-ctx .card.success{ border-color: color-mix(in oklab, var(--success) 55%, var(--border)); }
+.resolver-ctx .card.error{ border-color: color-mix(in oklab, var(--error) 55%, var(--border)); }
 
-.header{
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
+.resolver-ctx .page-header,
+.resolver-ctx .header{
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 8px;
 }
-.title{
-  font-size: clamp(18px, 2.4vw, 22px);
-  font-weight: 700;
-}
-.meta{
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.chip{
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  line-height: 1;
-  border: 1px solid var(--border);
+.resolver-ctx .title{ font-size: clamp(18px, 2.4vw, 22px); font-weight: 700; }
+.resolver-ctx .muted{ color: var(--muted); }
+
+/* Chips/meta/progreso */
+.resolver-ctx .meta{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.resolver-ctx .chip{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:6px 10px; border-radius:999px; font-size:12px; line-height:1;
+  border:1px solid var(--border);
   background: color-mix(in oklab, var(--card) 75%, var(--muted-2));
-  color: var(--muted);
-  user-select: none;
+  color: var(--muted); user-select:none;
 }
-.timer{
+.resolver-ctx .timer{
   font-variant-numeric: tabular-nums;
   background: color-mix(in oklab, var(--warning) 20%, transparent);
   border-color: color-mix(in oklab, var(--warning) 30%, var(--border));
   color: color-mix(in oklab, var(--warning) 85%, var(--text));
 }
 
-.progress{
-  height: 10px;
-  background: var(--muted-2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  overflow: hidden;
-  margin: 10px 0 18px;
+.resolver-ctx .progress{
+  height:10px; background:var(--muted-2);
+  border:1px solid var(--border); border-radius:999px;
+  overflow:hidden; margin:10px 0 18px;
 }
-.progressBar{
-  height: 100%;
-  width: var(--progress, 0%);
+.resolver-ctx .progressBar{
+  height:100%; width:var(--progress, 0%);
   background: linear-gradient(90deg, var(--primary-600), var(--primary));
   transition: width .35s ease;
 }
 
-.question{ margin-top: 8px; }
-.questionIndex{
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-.questionText{
-  font-size: clamp(18px, 2.4vw, 22px);
-  font-weight: 600;
-  line-height: 1.35;
-  margin-bottom: 14px;
+/* Pregunta */
+.resolver-ctx .question{ margin-top:8px; }
+.resolver-ctx .questionIndex{ font-size:12px; color:var(--muted); margin-bottom:6px; }
+.resolver-ctx .questionText{
+  font-size: clamp(18px, 2.4vw, 22px); font-weight:600; line-height:1.35; margin-bottom:14px;
 }
 
-.options{
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
+/* Contenedor de opciones (ambos sistemas de clases) */
+.resolver-ctx .options,
+.resolver-ctx .resolver-options{
+  display:grid; grid-template-columns:1fr; gap:10px;
 }
-.option{
-  display: grid;
-  grid-template-columns: 22px 1fr auto;
-  align-items: start;
-  gap: 12px;
-  padding: 14px 14px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+
+/* Tarjeta de opción (estilo principal) */
+.resolver-ctx .option,
+.resolver-ctx .radio-row{
+  display:grid; grid-template-columns: 22px 1fr;
+  align-items:start; gap:12px;
+  padding:14px;
+  border:1px solid var(--border);
+  border-radius:12px;
   background: color-mix(in oklab, var(--card) 90%, var(--muted-2));
-  cursor: pointer;
+  cursor:pointer; user-select:none;
   transition: border-color .18s ease, transform .12s ease, background-color .2s ease, box-shadow .18s ease;
 }
-.option:hover{
+.resolver-ctx .option:hover,
+.resolver-ctx .radio-row:hover{
   border-color: color-mix(in oklab, var(--primary) 35%, var(--border));
   transform: translateY(-1px);
   box-shadow: 0 6px 16px rgba(0,0,0,.18);
 }
-.option:active{ transform: translateY(0); }
-.option input[type="radio"]{
-  margin-top: 3px;
-  accent-color: var(--primary);
-  width: 18px; height: 18px;
+.resolver-ctx .option:active,
+.resolver-ctx .radio-row:active{ transform: translateY(0); }
+
+.resolver-ctx .option input[type="radio"],
+.resolver-ctx .radio-row input[type="radio"]{
+  margin-top:3px; accent-color:var(--primary); width:18px; height:18px;
 }
-.optionText{ font-size: 15px; color: var(--text); }
-.optionBadge{
-  font-size: 11px; padding: 4px 8px; border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--muted);
+.resolver-ctx .optionText{ font-size:15px; color:var(--text); }
+.resolver-ctx .optionBadge{
+  font-size:11px; padding:4px 8px; border-radius:999px;
+  border:1px solid var(--border);
+  color:var(--muted);
   background: color-mix(in oklab, var(--card) 75%, transparent);
 }
 
-.optionSelected{
+/* Estados de selección/corrección */
+.resolver-ctx .optionSelected,
+.resolver-ctx .radio-row.is-selected{
   border-color: var(--primary);
   background: color-mix(in oklab, var(--primary) 12%, transparent);
 }
-.optionCorrect{
+.resolver-ctx .optionCorrect{
   border-color: color-mix(in oklab, var(--success) 65%, var(--border));
   background: color-mix(in oklab, var(--success) 18%, transparent);
 }
-.optionWrong{
+.resolver-ctx .optionWrong{
   border-color: color-mix(in oklab, var(--error) 55%, var(--border));
   background: color-mix(in oklab, var(--error) 14%, transparent);
 }
 
-.footer{
-  display: flex; justify-content: space-between; align-items: center;
-  gap: 10px; margin-top: 18px;
+/* Acciones / botones */
+.resolver-ctx .footer,
+.resolver-ctx .resolver-actions{
+  display:flex; justify-content:space-between; align-items:center;
+  gap:10px; margin-top:18px;
 }
-.btn{
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 10px 14px; border-radius: 12px; font-weight: 600; font-size: 14px;
-  border: 1px solid var(--border);
+.resolver-ctx .btn{
+  display:inline-flex; align-items:center; gap:8px;
+  padding:10px 14px; border-radius:12px; font-weight:600; font-size:14px;
+  border:1px solid var(--border);
   background: color-mix(in oklab, var(--card) 85%, var(--muted-2));
-  color: var(--text); cursor: pointer;
+  color:var(--text); cursor:pointer;
   transition: transform .12s ease, background .18s ease, border-color .18s ease;
 }
-.btn:hover{ transform: translateY(-1px); border-color: color-mix(in oklab, var(--primary) 35%, var(--border)); }
-.btn:active{ transform: translateY(0); }
-.btnPrimary{
-  background: linear-gradient(180deg, var(--primary), var(--primary-600));
-  border: 1px solid color-mix(in oklab, var(--primary-600) 60%, #000);
-  color: white;
+.resolver-ctx .btn:hover{
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--primary) 35%, var(--border));
 }
-.btnPrimary:hover{ filter: brightness(1.04); }
-.btnGhost{ background: transparent; }
-.helper{ font-size: 12px; color: var(--muted); }
+.resolver-ctx .btn:active{ transform: translateY(0); }
 
-/* Paneles de estado (mensajes internos del componente) */
-.panel{
-  background: color-mix(in oklab, var(--card) 92%, var(--muted-2));
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px 16px;
+/* Soporta .btnPrimary y .btn.primary */
+.resolver-ctx .btnPrimary,
+.resolver-ctx .btn.primary{
+  background: linear-gradient(180deg, var(--primary), var(--primary-600));
+  border:1px solid color-mix(in oklab, var(--primary-600) 60%, #000);
+  color:#fff;
 }
-.alertError{ border-color: color-mix(in oklab, var(--error) 55%, var(--border)); }
-.alertSuccess{ border-color: color-mix(in oklab, var(--success) 55%, var(--border)); }
+.resolver-ctx .btnPrimary:hover,
+.resolver-ctx .btn.primary:hover{ filter: brightness(1.04); }
+.resolver-ctx .btnGhost{ background:transparent; }
+.resolver-ctx .helper{ font-size:12px; color:var(--muted); }
+
+/* Paneles/alerts */
+.resolver-ctx .panel{
+  background: color-mix(in oklab, var(--card) 92%, var(--muted-2));
+  border:1px solid var(--border);
+  border-radius:12px; padding:14px 16px;
+}
+.resolver-ctx .alertError{ border-color: color-mix(in oklab, var(--error) 55%, var(--border)); }
+.resolver-ctx .alertSuccess{ border-color: color-mix(in oklab, var(--success) 55%, var(--border)); }
 
 /* Toast local */
-.toast{
-  position: fixed;
-  inset-inline: 0;
-  bottom: 16px;
-  margin-inline: auto;
-  width: min(460px, calc(100% - 32px));
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px 14px;
-  color: var(--text);
-  box-shadow: var(--shadow);
-  animation: toast-in .2s ease both;
+.resolver-ctx .toast{
+  position:fixed; inset-inline:0; bottom:16px; margin-inline:auto;
+  width:min(460px, calc(100% - 32px));
+  background:var(--card); border:1px solid var(--border);
+  border-radius:12px; padding:12px 14px; color:var(--text);
+  box-shadow:var(--shadow); animation: toast-in .2s ease both;
 }
-.toastOk{ border-color: color-mix(in oklab, var(--success) 55%, var(--border)); }
-.toastErr{ border-color: color-mix(in oklab, var(--error) 55%, var(--border)); }
+.resolver-ctx .toastOk{ border-color: color-mix(in oklab, var(--success) 55%, var(--border)); }
+.resolver-ctx .toastErr{ border-color: color-mix(in oklab, var(--error) 55%, var(--border)); }
 @keyframes toast-in{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);} }
 
+/* Tabla de resultados por área */
+.resolver-ctx .resolver-table{
+  width:100%; border-collapse:separate; border-spacing:0;
+}
+.resolver-ctx .resolver-table thead th{
+  text-align:left; padding:8px 10px; font-weight:700;
+  border-bottom:1px solid var(--border);
+  color:var(--text);
+  background: color-mix(in oklab, var(--card) 85%, var(--muted-2));
+}
+.resolver-ctx .resolver-table tbody td{
+  padding:8px 10px; border-top:1px solid var(--border); color:var(--text);
+}
+.resolver-ctx .resolver-table .bold{ font-weight:700; }
+.resolver-ctx .resolver-table .cap{ text-transform:capitalize; }
+
+/* Pills por nivel (opcional) */
+.resolver-ctx .level-pill{
+  display:inline-flex; align-items:center; gap:6px; padding:4px 8px;
+  border-radius:999px; font-size:12px; line-height:1;
+  border:1px solid var(--border); color:var(--text);
+}
+.resolver-ctx .level-pill.avanzado{
+  background: color-mix(in oklab, var(--success) 18%, transparent);
+  border-color: color-mix(in oklab, var(--success) 55%, var(--border));
+}
+.resolver-ctx .level-pill.satisfactorio{
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
+}
+.resolver-ctx .level-pill.en_proceso{
+  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  border-color: color-mix(in oklab, var(--warning) 45%, var(--border));
+}
+.resolver-ctx .level-pill.inicial{
+  background: color-mix(in oklab, var(--error) 14%, transparent);
+  border-color: color-mix(in oklab, var(--error) 50%, var(--border));
+}
+
+/* Responsivo */
 @media (min-width: 720px){
-  .option{ padding: 16px 16px; }
-  .footer{ margin-top: 22px; }
+  .resolver-ctx .option,
+  .resolver-ctx .radio-row{ padding:16px; }
+  .resolver-ctx .footer,
+  .resolver-ctx .resolver-actions{ margin-top:22px; }
 }
