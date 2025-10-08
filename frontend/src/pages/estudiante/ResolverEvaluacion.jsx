@@ -40,14 +40,16 @@ export default function ResolverEvaluacion() {
   const [numActual, setNumActual]       = useState(0);
   const [finished, setFinished]         = useState(false);
 
-  // resultados por área (cuando termine)
-  const [areaScores, setAreaScores]     = useState(null); // {areas:[{...}], total?:...}
+  const [areaScores, setAreaScores]     = useState(null); // {areas:[...], summary?:{...}}
 
-  // Pregunta actual
   const [question, setQuestion] = useState(null);
   const [selected, setSelected] = useState(null);
 
-  // Toma de tiempo por pregunta
+  // feedback correcto/incorrecto
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [lastFeedback, setLastFeedback] = useState({ correcta: null, selectedId: null });
+
+  // tiempo por pregunta
   const startTickRef = useRef(Date.now());
 
   /* =============== helpers http =============== */
@@ -73,6 +75,9 @@ export default function ResolverEvaluacion() {
         id_opcion: o.id_opcion ?? o.id ?? o.value,
         texto:     o.texto     ?? o.label ?? o.descripcion ?? o.text ?? "Opción",
       })),
+      id_area: qRaw.id_area ?? null,
+      area:    qRaw.area ?? null,
+      valor:   Number(qRaw.valor ?? 0), // ← único valor que mostramos
     };
     return q?.id_pregunta ? q : null;
   }, []);
@@ -96,7 +101,6 @@ export default function ResolverEvaluacion() {
           const materia = match.id_materia ?? match.materia_id ?? null;
           const nmax    = match.num_preg_max ?? match.num_preguntas ?? 10;
           if (materia != null) {
-            log("meta detectada:", { id_materia: materia, num_preg_max: nmax });
             return { id_materia: Number(materia), num_preg_max: Number(nmax) };
           }
         }
@@ -116,9 +120,10 @@ export default function ResolverEvaluacion() {
     setQuestion(null);
     setSelected(null);
     setNumActual(0);
+    setShowFeedback(false);
+    setLastFeedback({ correcta: null, selectedId: null });
 
     try {
-      // best-effort: marcar inicio sala
       try { await fetch(`${API}/api/waitroom/${sid}/start`, { method: "POST" }); } catch {}
 
       const meta = await fetchSessionMeta();
@@ -130,7 +135,7 @@ export default function ResolverEvaluacion() {
         id_materia: meta.id_materia,
         num_preg_max: meta.num_preg_max,
         id_sesion: Number.isFinite(sid) ? sid : undefined,
-        sessionId: Number.isFinite(sid) ? sid : undefined, // compat
+        sessionId: Number.isFinite(sid) ? sid : undefined,
       };
       const startRes = await fetchJSON(`${API}/api/adaptative/session/start`, {
         method: "POST",
@@ -142,7 +147,6 @@ export default function ResolverEvaluacion() {
 
       setIdEvaluacion(Number(startRes.id_evaluacion));
       setValorStd(Number(startRes.valor_estandar ?? 0));
-      // Si el back devuelve num_preg_max definitivo, úsalo
       if (Number.isFinite(Number(startRes.num_preg_max))) {
         setNumMax(Number(startRes.num_preg_max));
       }
@@ -169,15 +173,15 @@ export default function ResolverEvaluacion() {
       try {
         const j = await fetchJSON(u);
         if (j && (j.areas || j.items)) {
-          const payload = j.areas ? j : { areas: j.items, total: j.total };
+          const payload = j.areas ? j : { areas: j.items, summary: j.summary, total: j.total };
           return payload;
         }
-      } catch (e) { /* probar siguiente */ }
+      } catch (e) {}
     }
     return null;
   }, [API, sid, fetchJSON]);
 
-  /* =============== enviar respuesta + siguiente =============== */
+  /* =============== enviar respuesta + siguiente (con highlight) =============== */
   const submitAnswer = useCallback(async () => {
     if (!question || selected == null || !idEvaluacion || !idMateria) return;
     setSubmitting(true);
@@ -199,40 +203,44 @@ export default function ResolverEvaluacion() {
         body: JSON.stringify(body),
       });
 
+      // feedback visual antes de cambiar
+      setLastFeedback({ correcta: !!ans.correcta, selectedId: Number(selected) });
+      setShowFeedback(true);
+
       // terminó?
       if (ans.finished) {
+        await new Promise(r => setTimeout(r, 450));
+        setShowFeedback(false);
+
         setFinished(true);
         setQuestion(null);
         setSelected(null);
 
-        // usar áreas del response si ya vienen; si no, pedirlas
         if (ans.areas && Array.isArray(ans.areas) && ans.areas.length) {
-          setAreaScores({ areas: ans.areas, total: null });
+          setAreaScores({ areas: ans.areas, summary: ans.summary ?? null });
         } else {
           try {
             const areas = await fetchAreaScores(idEvaluacion);
             if (areas) setAreaScores(areas);
-          } catch (e) {
-            warn("area-scores:", e.message);
-          }
+          } catch (e) { warn("area-scores:", e.message); }
         }
 
-        // cerrar evaluación (best effort)
-        try {
-          await fetchJSON(`${API}/api/adaptative/session/${idEvaluacion}/end`, { method: "POST" });
-        } catch {}
+        try { await fetchJSON(`${API}/api/adaptative/session/${idEvaluacion}/end`, { method: "POST" }); } catch {}
         return;
       }
 
       // siguiente
       const nextQ = normalizeQuestion(ans.question);
       if (!nextQ) {
+        await new Promise(r => setTimeout(r, 450));
+        setShowFeedback(false);
+
         setFinished(true);
         setQuestion(null);
         setSelected(null);
 
         if (ans.areas && Array.isArray(ans.areas) && ans.areas.length) {
-          setAreaScores({ areas: ans.areas, total: null });
+          setAreaScores({ areas: ans.areas, summary: ans.summary ?? null });
         } else {
           try {
             const areas = await fetchAreaScores(idEvaluacion);
@@ -240,11 +248,12 @@ export default function ResolverEvaluacion() {
           } catch {}
         }
 
-        try {
-          await fetchJSON(`${API}/api/adaptative/session/${idEvaluacion}/end`, { method: "POST" });
-        } catch {}
+        try { await fetchJSON(`${API}/api/adaptative/session/${idEvaluacion}/end`, { method: "POST" }); } catch {}
         return;
       }
+
+      await new Promise(r => setTimeout(r, 450));
+      setShowFeedback(false);
 
       setValorStd(Number(ans.valor_estandar ?? valorStd));
       setQuestion(nextQ);
@@ -269,6 +278,17 @@ export default function ResolverEvaluacion() {
     return () => window.removeEventListener("keydown", onKey);
   }, [loading, submitting, question, selected, submitAnswer]);
 
+  /* =============== helpers UI =============== */
+
+  const computeSummaryFromAreas = (areas) => {
+    if (!areas || !areas.length) return null;
+    const total = areas.reduce((a,x)=>a + Number(x.total||0), 0);
+    const correctas = areas.reduce((a,x)=>a + Number(x.correctas||0), 0);
+    const pct_global = total>0 ? Number(((correctas/total)*100).toFixed(1)) : 0;
+    const rit_prom = total>0 ? Number((areas.reduce((a,x)=>a + (Number(x.rit||0)*Number(x.total||0)),0)/total).toFixed(1)) : 0;
+    return { pct_global, rit_prom, total, correctas };
+  };
+
   /* =============== UI =============== */
 
   if (!estudianteId) {
@@ -284,6 +304,9 @@ export default function ResolverEvaluacion() {
       </div>
     );
   }
+
+  const styleOK = { borderColor: "#16a34a", boxShadow: "0 0 0 2px #16a34a66" };
+  const styleBAD = { borderColor: "#dc2626", boxShadow: "0 0 0 2px #dc262666" };
 
   return (
     <div id="resolver-root" className="resolver-ctx" data-testid="resolver-page">
@@ -322,7 +345,23 @@ export default function ResolverEvaluacion() {
               <strong>¡Sesión finalizada!</strong> Gracias por participar.
             </div>
 
-            {/* Tabla de áreas (si existe) */}
+            {/* Resumen general */}
+            {(() => {
+              const sumServer = areaScores?.summary || null;
+              const sumLocal  = computeSummaryFromAreas(areaScores?.areas || []);
+              const sum = sumServer || sumLocal;
+              if (!sum) return null;
+              const promedio10 = Number(((sum.pct_global ?? 0) / 10).toFixed(1));
+              return (
+                <div className="panel" style={{marginBottom:12}}>
+                  <span>Promedio general (0–10): <strong>{promedio10}</strong></span>
+                  <span style={{marginLeft:16}}>% Acierto global: <strong>{sum.pct_global?.toFixed?.(1) ?? sum.pct_global}%</strong></span>
+                  <span style={{marginLeft:16}}>RIT promedio: <strong>{sum.rit_prom}</strong></span>
+                </div>
+              );
+            })()}
+
+            {/* Tabla de áreas */}
             {areaScores?.areas?.length ? (
               <div style={{marginTop:12}}>
                 <h3 style={{margin:"8px 0 10px"}}>Resultados por área</h3>
@@ -344,14 +383,14 @@ export default function ResolverEvaluacion() {
                       const pct = typeof a.pct === "number"
                         ? a.pct
                         : (total > 0 ? (correctas / total) * 100 : 0);
-                      const rit = Math.round(Number(a.rit ?? 0));
+                      const rit = Number(a.rit ?? 0);
                       const nivel = a.level || a.nivel || "—";
                       return (
                         <tr key={i}>
                           <td className="cap">{nombre}</td>
                           <td className="bold">{correctas} / {total}</td>
                           <td>{pct.toFixed(1)}%</td>
-                          <td className="bold">{rit || "—"}</td>
+                          <td className="bold">{isFinite(rit) ? rit.toFixed(1) : "—"}</td>
                           <td>
                             <span className={`level-pill ${String(nivel).toLowerCase().replaceAll(" ", "_")}`}>
                               {nivel}
@@ -394,13 +433,25 @@ export default function ResolverEvaluacion() {
                   <div className="questionIndex">Pregunta {numActual}{numMax ? ` / ${numMax}` : ""}</div>
                   <div className="questionText">{question.enunciado}</div>
 
+                  {/* meta de la pregunta */}
+                  <div className="muted" style={{marginTop:6}}>
+                    Área: <strong>{question.area ?? "—"}</strong>
+                    <span style={{marginLeft:12}}>Valor: <strong>{question.valor ?? "—"}</strong></span>
+                  </div>
+
                   <div className="resolver-options">
                     {question.opciones.map((op) => {
                       const isSel = String(selected) === String(op.id_opcion);
+                      const feedbackStyle =
+                        showFeedback && isSel
+                          ? (lastFeedback.correcta ? { borderColor: "#16a34a", boxShadow: "0 0 0 2px #16a34a66" }
+                                                    : { borderColor: "#dc2626", boxShadow: "0 0 0 2px #dc262666" })
+                          : {};
                       return (
                         <label
                           key={op.id_opcion}
                           className={`radio-row ${isSel ? "is-selected" : ""}`}
+                          style={feedbackStyle}
                           onClick={() => setSelected(op.id_opcion)}
                         >
                           <input
@@ -417,7 +468,11 @@ export default function ResolverEvaluacion() {
                 </div>
 
                 <div className="resolver-actions">
-                  <span className="helper">Selecciona una opción y presiona Enviar (Enter).</span>
+                  <span className="helper">
+                    {showFeedback && lastFeedback.correcta != null
+                      ? (lastFeedback.correcta ? "¡Correcto!" : "Incorrecto")
+                      : "Selecciona una opción y presiona Enviar (Enter)."}
+                  </span>
                   <div style={{display:"flex", gap:10}}>
                     <button className="btn" onClick={() => navigate(-1)} disabled={submitting}>Volver</button>
                     <button

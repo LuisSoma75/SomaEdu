@@ -83,8 +83,6 @@ async function markSesionStartedIfNeeded(id_sesion) {
   );
   if (!rows.length) return;
   const { tiempo_limite_seg, iniciado_en } = rows[0];
-
-  // Solo iniciar reloj si hay límite > 0
   if (tiempo_limite_seg != null && Number(tiempo_limite_seg) > 0 && !iniciado_en) {
     await db.query(
       `UPDATE "Sesion_evaluacion" SET "iniciado_en" = NOW() WHERE "id_sesion"=$1`,
@@ -111,7 +109,40 @@ async function closeEvaluacionIfPossible(id_evaluacion) {
    Helpers de dominio
 ================================== */
 
-// estándar más cercano al target
+// Preferimos Pregunta.valor (o similares) si existe; si no, Estandar.Valor
+async function getPreguntaValorColumn() {
+  const cols = await tableColumns("Pregunta");
+  const cands = ["valor", "Valor", "valor_pregunta", "puntaje", "peso"];
+  for (const c of cands) {
+    const hit = cols.find(x => x.name.toLowerCase() === c.toLowerCase());
+    if (hit) return hit.name;
+  }
+  return null;
+}
+
+// Valor que usaremos para cálculos (del ítem)
+async function getValorFromPregunta(id_pregunta) {
+  const pValCol = await getPreguntaValorColumn();
+  if (pValCol) {
+    const { rows } = await db.query(
+      `SELECT "${pValCol}"::numeric AS v FROM "Pregunta" WHERE "id_pregunta"=$1`,
+      [Number(id_pregunta)]
+    );
+    if (rows.length) return rows[0].v != null ? Number(rows[0].v) : null;
+  }
+  const { rows } = await db.query(
+    `
+    SELECT e."Valor"::numeric AS v
+    FROM "Pregunta" p
+    JOIN "Estandar" e ON e."id_estandar"=p."id_estandar"
+    WHERE p."id_pregunta"=$1
+    `,
+    [Number(id_pregunta)]
+  );
+  return rows.length ? Number(rows[0].v) : null;
+}
+
+// estándar más cercano al target (para navegar dificultad)
 async function getClosestStandard(id_materia, targetValorNum) {
   const { rows } = await db.query(
     `
@@ -128,7 +159,7 @@ async function getClosestStandard(id_materia, targetValorNum) {
   return rows[0] || null;
 }
 
-// siguiente/prev estándar
+// siguiente/prev estándar (navegación)
 async function stepStandard(id_materia, currentValor, dir) {
   if (dir === "up") {
     const { rows } = await db.query(
@@ -170,20 +201,6 @@ async function getAskedQuestionIds(id_evaluacion) {
     [id_evaluacion]
   );
   return rows.map(r => Number(r.id_pregunta));
-}
-
-// Valor estándar de una pregunta
-async function getValorFromPregunta(id_pregunta) {
-  const { rows } = await db.query(
-    `
-    SELECT e."Valor"::numeric AS "Valor"
-    FROM "Pregunta" p
-    JOIN "Estandar" e ON e."id_estandar"=p."id_estandar"
-    WHERE p."id_pregunta"=$1
-    `,
-    [id_pregunta]
-  );
-  return rows.length ? Number(rows[0].Valor) : null;
 }
 
 // Enunciado desde BD
@@ -307,7 +324,107 @@ async function getTemporadaActivaId() {
   return rows.length ? Number(rows[0].id_temporada) : null;
 }
 
-// Busca una clase compatible (grado + materia)
+/* ==================================
+   Helpers de ÁREAS para balanceo
+================================== */
+
+async function getAreasForMateria(id_materia) {
+  const { rows } = await db.query(
+    `SELECT a."id_area"
+     FROM "Area" a
+     WHERE a."id_materia"=$1
+     ORDER BY a."id_area" ASC`,
+    [Number(id_materia)]
+  );
+  return rows.map(r => Number(r.id_area));
+}
+async function getAreaIdFromPregunta(id_pregunta) {
+  const { rows } = await db.query(
+    `
+    SELECT a."id_area"
+    FROM "Pregunta" p
+    JOIN "Estandar" e ON e."id_estandar" = p."id_estandar"
+    JOIN "Tema"     t ON t."id_tema"     = e."id_tema"
+    JOIN "Area"     a ON a."id_area"     = t."id_area"
+    WHERE p."id_pregunta"=$1
+    LIMIT 1
+    `,
+    [Number(id_pregunta)]
+  );
+  return rows.length ? Number(rows[0].id_area) : null;
+}
+async function getAreaNameById(id_area) {
+  try {
+    const cols = await tableColumns("Area");
+    if (!cols.length) return null;
+    const set = new Set(cols.map(c => c.name.toLowerCase()));
+    const pick = (...cands) => {
+      for (const c of cands) if (set.has(c)) return cols.find(x => x.name.toLowerCase()===c).name;
+      return null;
+    };
+    const nameCol = pick("nombre_area","nombre","descripcion","descripcion_area","titulo");
+    if (!nameCol) return null;
+    const { rows } = await db.query(
+      `SELECT "${nameCol}" AS nombre FROM "Area" WHERE "id_area"=$1 LIMIT 1`,
+      [Number(id_area)]
+    );
+    return rows.length ? String(rows[0].nombre) : null;
+  } catch { return null; }
+}
+async function getAreaCountsForEval(id_evaluacion) {
+  const { rows } = await db.query(
+    `
+    SELECT a."id_area", COUNT(*)::int AS c
+    FROM "Detalle_evaluacion" d
+    JOIN "Pregunta"  p ON p."id_pregunta" = d."id_pregunta"
+    JOIN "Estandar"  e ON e."id_estandar" = p."id_estandar"
+    JOIN "Tema"      t ON t."id_tema"     = e."id_tema"
+    JOIN "Area"      a ON a."id_area"     = t."id_area"
+    WHERE d."id_evaluacion"=$1
+    GROUP BY a."id_area"
+    `,
+    [Number(id_evaluacion)]
+  );
+  const map = {};
+  for (const r of rows) map[Number(r.id_area)] = Number(r.c);
+  return map;
+}
+async function getPreferAreasBalanced(id_evaluacion, id_materia) {
+  const all = await getAreasForMateria(id_materia);
+  if (!all.length) return [];
+  const counts = id_evaluacion ? await getAreaCountsForEval(id_evaluacion) : {};
+  let min = Infinity;
+  for (const a of all) min = Math.min(min, counts[a] ?? 0);
+  return all.filter(a => (counts[a] ?? 0) === min);
+}
+async function pickNextQuestionBalanced({ id_materia, targetValor, exclude = [], preferAreas = [] }) {
+  const tryPick = async (areasFilter) => {
+    const { rows } = await db.query(
+      `
+      SELECT p."id_pregunta", p."enunciado", a."id_area"
+      FROM "Pregunta" p
+      JOIN "Estandar" e ON e."id_estandar" = p."id_estandar"
+      JOIN "Tema"     t ON t."id_tema"     = e."id_tema"
+      JOIN "Area"     a ON a."id_area"     = t."id_area"
+      WHERE a."id_materia" = $1
+        AND NOT (p."id_pregunta" = ANY($3))
+        AND ($4::int[] IS NULL OR a."id_area" = ANY($4))
+      ORDER BY ABS(e."Valor"::numeric - $2::numeric) ASC, random()
+      LIMIT 1
+      `,
+      [ Number(id_materia), Number(targetValor || 0), (exclude.length ? exclude : [0]), (areasFilter && areasFilter.length ? areasFilter : null) ]
+    );
+    return rows.length ? { id_pregunta: Number(rows[0].id_pregunta), enunciado: rows[0].enunciado, id_area: Number(rows[0].id_area) } : null;
+  };
+  let q = await tryPick(preferAreas);
+  if (!q) q = await tryPick(null);
+  return q;
+}
+
+/* ==================================
+   Matriculación / Evaluación
+================================== */
+
 async function findClaseIdFor(id_grado, id_materia) {
   if (await hasColumns("Clase", ["id_clase"])) {
     const hasG = await hasColumns("Clase", ["id_grado"]);
@@ -357,9 +474,6 @@ async function findClaseIdFor(id_grado, id_materia) {
   return null;
 }
 
-/**
- * Asegura (o crea) una matrícula. Incluye id_clase y fecha_alta si son obligatorias.
- */
 async function ensureMatricula(carne_estudiante, id_materia) {
   const carne = String(carne_estudiante);
 
@@ -448,13 +562,13 @@ async function ensureMatricula(carne_estudiante, id_materia) {
     }
     id_estudiante_val = Number(eRes.rows[0].id_estudiante);
     id_grado_val = eRes.rows[0].id_grado != null ? Number(eRes.rows[0].id_grado) : null;
-  } else {
-    if (eSet.has("id_grado")) {
-      const gRes = await db.query(
-        `SELECT "id_grado" FROM "Estudiantes" WHERE "carne_estudiante"=$1 LIMIT 1`,
-        [carne]
-      );
-      if (gRes.rows.length) id_grado_val = gRes.rows[0].id_grado != null ? Number(gRes.rows[0].id_grado) : null;
+  } else if (eSet.has("id_grado")) {
+    const gRes = await db.query(
+      `SELECT "id_grado" FROM "Estudiantes" WHERE "carne_estudiante"=$1 LIMIT 1`,
+      [carne]
+    );
+    if (gRes.rows.length) {
+      id_grado_val = gRes.rows[0].id_grado != null ? Number(gRes.rows[0].id_grado) : null;
     }
   }
 
@@ -464,22 +578,16 @@ async function ensureMatricula(carne_estudiante, id_materia) {
   if (mSet.has("id_clase") && required.includes("id_clase")) {
     id_clase_val = await findClaseIdFor(id_grado_val, Number(id_materia));
     if (id_clase_val == null) {
-      throw Object.assign(
-        new Error("No se encontró una clase para el grado del estudiante y la materia."),
-        { status: 400 }
-      );
+      throw Object.assign(new Error("No se encontró una clase para el grado del estudiante y la materia."), { status: 400 });
     }
   }
 
   const now = new Date();
   const values = {};
-  const canUse = (n) => mSet.has(n.toLowerCase());
+  const canUse = (n) => mSet.has(String(n).toLowerCase()); // sin await
 
   if (canUse("id_estudiante") && id_estudiante_val != null) values.id_estudiante = id_estudiante_val;
-  if (canUse("id_temporada")) {
-    const temporadaId = await getTemporadaActivaId();
-    if (temporadaId != null) values.id_temporada = temporadaId;
-  }
+  if (canUse("id_temporada") && temporadaId != null) values.id_temporada = temporadaId;
   if (canUse("id_grado") && id_grado_val != null) values.id_grado = id_grado_val;
   if (canUse("carne_estudiante")) values.carne_estudiante = carne;
   if (canUse("carne_est")) values.carne_est = carne;
@@ -489,10 +597,7 @@ async function ensureMatricula(carne_estudiante, id_materia) {
 
   const missing = required.filter(r => values[r] === undefined);
   if (missing.length) {
-    throw Object.assign(
-      new Error(`No se pudo crear la matrícula: faltan columnas obligatorias (${missing.join(", ")}).`),
-      { status: 400 }
-    );
+    throw Object.assign(new Error(`No se pudo crear la matrícula: faltan columnas obligatorias (${missing.join(", ")}).`), { status: 400 });
   }
 
   const cols = Object.keys(values);
@@ -508,10 +613,6 @@ async function ensureMatricula(carne_estudiante, id_materia) {
   return newId;
 }
 
-/**
- * Crea Evaluacion respetando columnas reales.
- * - Solo inserta id_sesion si es válido y EXISTE en "Sesion_evaluacion".
- */
 async function createEvaluacionFlex({ carne_est, id_materia, id_sesion }) {
   const cols = await tableColumns("Evaluacion");
   const set  = new Set(cols.map(c => c.name.toLowerCase()));
@@ -545,10 +646,7 @@ async function createEvaluacionFlex({ carne_est, id_materia, id_sesion }) {
     .filter(n => values[n] === undefined);
 
   if (missing.length) {
-    throw Object.assign(
-      new Error(`No se pudo crear la evaluación: faltan columnas obligatorias (${missing.join(", ")}).`),
-      { status: 400 }
-    );
+    throw Object.assign(new Error(`No se pudo crear la evaluación: faltan columnas obligatorias (${missing.join(", ")}).`), { status: 400 });
   }
 
   const cNames = Object.keys(values);
@@ -563,63 +661,58 @@ async function createEvaluacionFlex({ carne_est, id_materia, id_sesion }) {
 }
 
 /* ==================================
-   Resultados por área (RIT en escala de estándares)
+   Resultados por área (RIT = promedio del valor del ÍTEM acertado)
 ================================== */
 
-/**
- * Devuelve {id_area, nombre, total, correctas, pct, rit, nivel}
- * RIT calibrado a la escala de estándares (p.ej. 0–20):
- *   RIT = SUM(Valor_estándar de preguntas correctas) / total_preguntas_area
- * Umbrales de nivel relativos al máximo valor real por área:
- *   <40%  inicial | 40–65% en_proceso | 65–85% satisfactorio | ≥85% avanzado
- */
 async function getAreaResults(id_evaluacion) {
-  // Verificamos que haya Respuesta
   const hasResp = await hasColumns("Respuesta", ["id_evaluacion","id_pregunta","correcta"]);
   if (!hasResp) return [];
 
-  // Detectar columnas de nombre de área
   const aCols = await tableColumns("Area");
   if (!aCols.length) return [];
   const findCol = (cands) => {
     const set = new Set(aCols.map(c => c.name.toLowerCase()));
-    for (const c of cands) {
-      if (set.has(c.toLowerCase())) return aCols.find(x => x.name.toLowerCase() === c).name;
-    }
+    for (const c of cands) if (set.has(c.toLowerCase())) return aCols.find(x => x.name.toLowerCase()===c).name;
     return null;
   };
   const aId   = findCol(["id_area"]) || "id_area";
   const aName = findCol(["nombre_area","nombre","Nombre","descripcion","descripcion_area","titulo"]) || "id_area";
 
-  // Consulta: total/correctas por área + rit crudo y límites min/max de Valor en esa área
+  const pValCol = await getPreguntaValorColumn();
+  const valueExpr = pValCol ? `p."${pValCol}"::numeric` : `e."Valor"::numeric`;
+
   const sql = `
-    WITH area_bounds AS (
+    WITH items AS (
       SELECT
-        t."id_area"                          AS id_area,
-        COALESCE(MIN(e."Valor"::numeric),0)  AS minv,
-        COALESCE(MAX(e."Valor"::numeric),20) AS maxv
-      FROM "Estandar" e
-      JOIN "Tema" t ON t."id_tema" = e."id_tema"
-      GROUP BY t."id_area"
+        r."id_evaluacion",
+        r."correcta",
+        ${valueExpr} AS v,
+        a."${aId}"   AS id_area,
+        a."${aName}" AS nombre
+      FROM "Respuesta" r
+      JOIN "Pregunta" p ON p."id_pregunta" = r."id_pregunta"
+      JOIN "Estandar" e ON e."id_estandar" = p."id_estandar"
+      JOIN "Tema"     t ON t."id_tema"     = e."id_tema"
+      JOIN "Area"     a ON a."id_area"     = t."id_area"
+      WHERE r."id_evaluacion" = $1
+    ),
+    area_bounds AS (
+      SELECT id_area, COALESCE(MIN(v),0) AS minv, COALESCE(MAX(v),20) AS maxv
+      FROM items
+      GROUP BY id_area
     )
     SELECT
-      a."${aId}"   AS id_area,
-      a."${aName}" AS nombre,
+      i.id_area,
+      i.nombre,
       COUNT(*)::int AS total,
-      SUM(CASE WHEN r."correcta"=true THEN 1 ELSE 0 END)::int AS correctas,
-      (SUM(CASE WHEN r."correcta"=true THEN e."Valor"::numeric ELSE 0 END)
-        / NULLIF(COUNT(*),0)::numeric) AS rit_raw,
+      SUM(CASE WHEN i."correcta"=true THEN 1 ELSE 0 END)::int AS correctas,
+      COALESCE(AVG(i.v) FILTER (WHERE i."correcta"=true), 0) AS rit_raw,
       ab.minv AS minv,
       ab.maxv AS maxv
-    FROM "Respuesta" r
-    JOIN "Pregunta" p ON p."id_pregunta" = r."id_pregunta"
-    JOIN "Estandar" e ON e."id_estandar" = p."id_estandar"
-    JOIN "Tema"     t ON t."id_tema"     = e."id_tema"
-    JOIN "Area"     a ON a."id_area"     = t."id_area"
-    JOIN area_bounds ab ON ab.id_area    = a."${aId}"
-    WHERE r."id_evaluacion" = $1
-    GROUP BY 1,2, ab.minv, ab.maxv
-    ORDER BY 2 ASC
+    FROM items i
+    JOIN area_bounds ab ON ab.id_area = i.id_area
+    GROUP BY i.id_area, i.nombre, ab.minv, ab.maxv
+    ORDER BY i.nombre ASC
   `;
   const { rows } = await db.query(sql, [Number(id_evaluacion)]);
 
@@ -636,12 +729,10 @@ async function getAreaResults(id_evaluacion) {
     const correctas = Number(r.correctas) || 0;
     const pct       = total > 0 ? (correctas / total) : 0;
 
-    const minv = Number(r.minv);
-    const maxv = Number(r.maxv) || 20;     // tope de tu escala de estándares
-    let rit    = Number(r.rit_raw) || 0;   // ya está en [minv, maxv] por construcción
+    const maxv = Number(r.maxv) || 20;
+    let rit    = Number(r.rit_raw) || 0;
 
-    // Clamp y redondeo
-    rit = Math.max(minv, Math.min(maxv, rit));
+    rit = Math.max(0, Math.min(maxv, rit));
     const ritRounded = Number(rit.toFixed(1));
 
     return {
@@ -650,10 +741,190 @@ async function getAreaResults(id_evaluacion) {
       total,
       correctas,
       pct: Number((pct * 100).toFixed(1)),
-      rit: ritRounded,               // ← escala 0–maxv (p.ej. 0–20)
+      rit: ritRounded,   // promedio del valor del ítem (solo aciertos)
       nivel: toLevel(rit, maxv),
     };
   });
+}
+
+/* ==================================
+   Resumen (promedio general y por área)
+================================== */
+
+function summarizeAreas(areas = []) {
+  const toNum = (v) => Number(v ?? 0);
+
+  const total = areas.reduce((a, x) => a + toNum(x.total), 0);
+  const correctas = areas.reduce((a, x) => a + toNum(x.correctas), 0);
+  const pct_global = total > 0 ? Number(((correctas / total) * 100).toFixed(1)) : 0;
+
+  const rit_prom = total > 0
+    ? Number((areas.reduce((a, x) => a + toNum(x.rit) * toNum(x.total), 0) / total).toFixed(1))
+    : 0;
+
+  const nAreas = areas.length;
+  const avgFracArea = nAreas > 0
+    ? areas.reduce((a, x) => {
+        const t = toNum(x.total);
+        const c = toNum(x.correctas);
+        return a + (t > 0 ? (c / t) : 0);
+      }, 0) / nAreas
+    : 0;
+  const pct_area_prom = Number((avgFracArea * 100).toFixed(1));
+  const rit_area_prom = nAreas > 0
+    ? Number((areas.reduce((a, x) => a + toNum(x.rit), 0) / nAreas).toFixed(1))
+    : 0;
+
+  return { total, correctas, pct_global, rit_prom, pct_area_prom, rit_area_prom };
+}
+
+/* ==================================
+   Persistencias
+================================== */
+
+async function ensureResumenTableExists() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS "Resumen_evaluacion" (
+        "id_evaluacion" INTEGER PRIMARY KEY REFERENCES "Evaluacion"("id_evaluacion") ON DELETE CASCADE,
+        "total" INTEGER,
+        "correctas" INTEGER,
+        "pct_global" NUMERIC(5,1),
+        "rit_prom" NUMERIC(6,1),
+        "pct_area_prom" NUMERIC(5,1),
+        "rit_area_prom" NUMERIC(6,1),
+        "updated_at" TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await db.query(`ALTER TABLE "Resumen_evaluacion" ADD COLUMN IF NOT EXISTS "pct_area_prom" NUMERIC(5,1)`);
+    await db.query(`ALTER TABLE "Resumen_evaluacion" ADD COLUMN IF NOT EXISTS "rit_area_prom" NUMERIC(6,1)`);
+  } catch (e) {
+    warn("ensureResumenTableExists:", e.message);
+  }
+}
+function findRealCol(cols, lowerName) {
+  const hit = cols.find(c => c.name.toLowerCase() === lowerName);
+  return hit ? hit.name : null;
+}
+async function saveSummaryForEvaluacion(id_evaluacion, summary) {
+  try {
+    try {
+      const eCols = await tableColumns("Evaluacion");
+      const set = new Set(eCols.map(c => c.name.toLowerCase()));
+      const updPairs = [];
+      const params = [];
+      let i = 1;
+      const addIf = (cands, val) => {
+        for (const c of cands) {
+          if (set.has(c)) {
+            const real = findRealCol(eCols, c);
+            if (real) {
+              updPairs.push(`"${real}" = $${i++}`);
+              params.push(val);
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+      addIf(["pct_global","promedio_global","porcentaje_global","porcentaje_aciertos"], summary.pct_global);
+      addIf(["rit_prom","rit_promedio","promedio_rit"], summary.rit_prom);
+      addIf(["total_preguntas","total","n_preguntas"], summary.total);
+      addIf(["correctas","respuestas_correctas","aciertos"], summary.correctas);
+      addIf(["pct_area_prom","promedio_area","porcentaje_area","porcentaje_area_promedio"], summary.pct_area_prom);
+      addIf(["rit_area_prom","rit_prom_area","promedio_rit_area"], summary.rit_area_prom);
+
+      if (set.has("resumen") || set.has("summary_json")) {
+        const target = set.has("resumen") ? findRealCol(eCols,"resumen") : findRealCol(eCols,"summary_json");
+        try {
+          await db.query(
+            `UPDATE "Evaluacion" SET "${target}" = $1::jsonb WHERE "id_evaluacion"=$2`,
+            [JSON.stringify(summary), Number(id_evaluacion)]
+          );
+        } catch {
+          try {
+            await db.query(
+              `UPDATE "Evaluacion" SET "${target}" = $1 WHERE "id_evaluacion"=$2`,
+              [JSON.stringify(summary), Number(id_evaluacion)]
+            );
+          } catch (e2) { warn("Guardar resumen JSON en Evaluacion:", e2.message); }
+        }
+      }
+      if (updPairs.length) {
+        params.push(Number(id_evaluacion));
+        const sql = `UPDATE "Evaluacion" SET ${updPairs.join(", ")} WHERE "id_evaluacion"=$${i}`;
+        await db.query(sql, params);
+      }
+    } catch (e) { warn("saveSummary Evaluacion:", e.message); }
+
+    await ensureResumenTableExists();
+    try {
+      await db.query(
+        `
+        INSERT INTO "Resumen_evaluacion"
+          ("id_evaluacion","total","correctas","pct_global","rit_prom","pct_area_prom","rit_area_prom","updated_at")
+        VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+        ON CONFLICT ("id_evaluacion")
+        DO UPDATE SET
+          "total"=EXCLUDED."total",
+          "correctas"=EXCLUDED."correctas",
+          "pct_global"=EXCLUDED."pct_global",
+          "rit_prom"=EXCLUDED."rit_prom",
+          "pct_area_prom"=EXCLUDED."pct_area_prom",
+          "rit_area_prom"=EXCLUDED."rit_area_prom",
+          "updated_at"=NOW()
+        `,
+        [
+          Number(id_evaluacion),
+          Number(summary.total||0),
+          Number(summary.correctas||0),
+          Number(summary.pct_global||0),
+          Number(summary.rit_prom||0),
+          Number(summary.pct_area_prom||0),
+          Number(summary.rit_area_prom||0),
+        ]
+      );
+    } catch (e) { warn("upsert Resumen_evaluacion:", e.message); }
+  } catch (e) { warn("saveSummaryForEvaluacion (general):", e.message); }
+}
+
+async function ensureSnapshotAreaTableExists() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS "snapshot_promedio_area" (
+        "id_snapshot"    BIGSERIAL PRIMARY KEY,
+        "id_evaluacion"  BIGINT NOT NULL,
+        "id_area"        BIGINT NOT NULL,
+        "promedio_area"  NUMERIC(5,2) NOT NULL,
+        CONSTRAINT "evaluacion_area_uniq" UNIQUE ("id_evaluacion","id_area"),
+        CONSTRAINT "snapshot_area" FOREIGN KEY ("id_area") REFERENCES "Area"("id_area")
+      );
+    `);
+  } catch (e) {
+    warn("ensureSnapshotAreaTableExists:", e.message);
+  }
+}
+async function saveAreaSnapshots(id_evaluacion, areas = []) {
+  try {
+    await ensureSnapshotAreaTableExists();
+    for (const a of areas) {
+      const total = Number(a.total) || 0;
+      if (total <= 0) continue;
+      const prom = Number((Number(a.rit) || 0).toFixed(2)); // RIT del área (valor del ítem)
+      await db.query(
+        `
+        INSERT INTO "snapshot_promedio_area"
+          ("id_evaluacion","id_area","promedio_area")
+        VALUES ($1,$2,$3)
+        ON CONFLICT ("id_evaluacion","id_area")
+        DO UPDATE SET "promedio_area"=EXCLUDED."promedio_area"
+        `,
+        [ Number(id_evaluacion), Number(a.id_area), prom ]
+      );
+    }
+  } catch (e) {
+    warn("saveAreaSnapshots:", e.message);
+  }
 }
 
 /* ==================================
@@ -674,11 +945,9 @@ async function startSession(req, res) {
       req.params?.id_sesion ??
       req.params?.id;
 
-    if (!(await existsSesion(id_sesion))) {
-      id_sesion = null;
-    }
+    if (!(await existsSesion(id_sesion))) id_sesion = null;
 
-    // promedio
+    // promedio estudiante (si lo hay)
     let promedio = 0;
     try {
       const s1 = await db.query(
@@ -690,35 +959,15 @@ async function startSession(req, res) {
 
     const std0 = (await getClosestStandard(Number(id_materia), promedio)) || { id_estandar: null, Valor: 0 };
 
-    // IA (fallback SQL)
-    let firstQ = null;
-    try {
-      const rankRes = await IA.rank({
-        id_materia: Number(id_materia),
-        target_valor: Number(std0.Valor),
-        exclude: [],
-        k: 1,
-      });
-      firstQ = rankRes?.items?.[0] || null;
-    } catch (e) {
-      warn("IA.rank falló; fallback SQL:", e.message);
-    }
+    // Primera pregunta balanceada
+    const firstQ = await pickNextQuestionBalanced({
+      id_materia: Number(id_materia),
+      targetValor: Number(std0.Valor || 0),
+      exclude: [],
+      preferAreas: await getAreasForMateria(Number(id_materia)),
+    });
     if (!firstQ) {
-      const { rows } = await db.query(
-        `
-        SELECT p."id_pregunta", p."enunciado", e."Valor"::numeric AS valor_estandar
-        FROM "Pregunta" p
-        JOIN "Estandar" e ON e."id_estandar"=p."id_estandar"
-        JOIN "Tema" t ON t."id_tema"=e."id_tema"
-        JOIN "Area" a ON a."id_area"=t."id_area"
-        WHERE a."id_materia"=$1
-        ORDER BY ABS(e."Valor"::numeric - $2::numeric) ASC, p."id_pregunta" ASC
-        LIMIT 1
-        `,
-        [Number(id_materia), Number(std0.Valor || 0)]
-      );
-      if (!rows.length) return res.status(400).json({ ok:false, msg:"No se encontró una pregunta inicial." });
-      firstQ = { id_pregunta: Number(rows[0].id_pregunta), enunciado: rows[0].enunciado };
+      return res.status(400).json({ ok:false, msg:"No se encontró una pregunta inicial." });
     }
 
     // crear evaluación
@@ -733,9 +982,7 @@ async function startSession(req, res) {
       if (Number.isFinite(Number(id_sesion))) {
         await markSesionStartedIfNeeded(id_sesion);
       }
-    } catch (e) {
-      warn("markSesionStartedIfNeeded:", e.message);
-    }
+    } catch (e) { warn("markSesionStartedIfNeeded:", e.message); }
 
     // registrar primera pregunta
     const { rows: cRows } = await db.query(
@@ -756,12 +1003,10 @@ async function startSession(req, res) {
 
     const opciones  = await loadOptionsFromDB(Number(firstQ.id_pregunta));
     const enunciado = firstQ.enunciado || (await getEnunciado(Number(firstQ.id_pregunta)));
+    const valorItem = await getValorFromPregunta(Number(firstQ.id_pregunta));
 
-    // Config de sesión
-    let cfg = null;
-    try {
-      if (Number.isFinite(Number(id_sesion))) cfg = await getSesionCfgById(id_sesion);
-    } catch (e) { warn("getSesionCfgById:", e.message); }
+    let areaNombre = null;
+    try { areaNombre = await getAreaNameById(Number(firstQ.id_area)); } catch {}
 
     return res.json({
       ok: true,
@@ -771,10 +1016,11 @@ async function startSession(req, res) {
         id_pregunta: Number(firstQ.id_pregunta),
         enunciado,
         opciones,
+        id_area: Number(firstQ.id_area ?? 0) || null,
+        area: areaNombre || null,
+        valor: Number(valorItem ?? 0), // ← ÚNICO valor mostrado/usado en UI
       },
-      num_preg_max: Number(cfg?.num_preg_max ?? num_preg_max ?? 10),
-      tiempo_limite_seg: (cfg && Number(cfg.tiempo_limite_seg) > 0) ? Number(cfg.tiempo_limite_seg) : null,
-      estado_sesion: cfg?.estado ?? null,
+      num_preg_max: Number(num_preg_max ?? 10),
     });
   } catch (err) {
     warn("start error:", err);
@@ -809,7 +1055,7 @@ async function submitAnswer(req, res) {
 
     const correcta = await isOptionCorrect(oid, pid);
 
-    // guardar respuesta (respetando tipo TIME si existe)
+    // guardar respuesta
     try {
       const respHasBase = await hasColumns("Respuesta", ["id_evaluacion","id_pregunta","id_opcion"]);
       if (respHasBase) {
@@ -857,7 +1103,7 @@ async function submitAnswer(req, res) {
       warn("INSERT Respuesta falló:", e.message);
     }
 
-    // aplicar modos
+    // modos
     let cfg = null;
     try { cfg = await getSesionCfgByEvaluacion(id_evaluacion); } catch (e) { warn("getSesionCfgByEvaluacion:", e.message); }
 
@@ -865,10 +1111,13 @@ async function submitAnswer(req, res) {
     if (cfg?.estado && ["cerrada", "cancelada"].includes(String(cfg.estado))) {
       await closeEvaluacionIfPossible(id_evaluacion);
       const areas = await getAreaResults(id_evaluacion);
-      return res.json({ ok: true, correcta, finished: true, reason: "sesion_cerrada", areas, question: null });
+      const summary = summarizeAreas(areas);
+      await saveSummaryForEvaluacion(id_evaluacion, summary);
+      await saveAreaSnapshots(id_evaluacion, areas);
+      return res.json({ ok: true, correcta, finished: true, reason: "sesion_cerrada", areas, summary, question: null });
     }
 
-    // límite de tiempo
+    // límite por tiempo
     if (cfg?.tiempo_limite_seg != null && Number(cfg.tiempo_limite_seg) > 0 && cfg?.iniciado_en) {
       const { rows: tnow } = await db.query(`SELECT NOW() as now`);
       const now = new Date(tnow[0].now);
@@ -877,17 +1126,16 @@ async function submitAnswer(req, res) {
       if (elapsedSec >= Number(cfg.tiempo_limite_seg)) {
         await closeEvaluacionIfPossible(id_evaluacion);
         const areas = await getAreaResults(id_evaluacion);
-        return res.json({ ok: true, correcta, finished: true, reason: "timeout", areas, question: null });
+        const summary = summarizeAreas(areas);
+        await saveSummaryForEvaluacion(id_evaluacion, summary);
+        await saveAreaSnapshots(id_evaluacion, areas);
+        return res.json({ ok: true, correcta, finished: true, reason: "timeout", areas, summary, question: null });
       }
     }
 
-    // límite de número de preguntas
+    // límite por # preguntas
     let maxQ = null;
     if (cfg?.num_preg_max != null) maxQ = Number(cfg.num_preg_max);
-    if (maxQ == null && req.body?.num_preg_max != null) {
-      const v = Number(req.body.num_preg_max);
-      if (Number.isFinite(v) && v > 0) maxQ = v;
-    }
     if (maxQ != null) {
       const { rows: cRows } = await db.query(
         `SELECT COUNT(1) AS c FROM "Detalle_evaluacion" WHERE "id_evaluacion"=$1`,
@@ -897,11 +1145,14 @@ async function submitAnswer(req, res) {
       if (yaMostradas >= maxQ) {
         await closeEvaluacionIfPossible(id_evaluacion);
         const areas = await getAreaResults(id_evaluacion);
-        return res.json({ ok:true, correcta, finished:true, reason:"max_preguntas", areas, question:null });
+        const summary = summarizeAreas(areas);
+        await saveSummaryForEvaluacion(id_evaluacion, summary);
+        await saveAreaSnapshots(id_evaluacion, areas);
+        return res.json({ ok:true, correcta, finished:true, reason:"max_preguntas", areas, summary, question:null });
       }
     }
 
-    // lógica adaptativa
+    // lógica adaptativa → target (navegación)
     let twoRight=false, twoWrong=false;
     try {
       const { rows } = await db.query(
@@ -915,7 +1166,7 @@ async function submitAnswer(req, res) {
 
     let currentValor = (valor_estandar_actual != null)
       ? Number(valor_estandar_actual)
-      : (await getValorFromPregunta(pid)) ?? 0;
+      : (await getValorFromPregunta(Number(id_pregunta))) ?? 0;
 
     const dir = twoRight ? "up" : twoWrong ? "down" : "stay";
     const stdNext = dir === "stay"
@@ -924,7 +1175,10 @@ async function submitAnswer(req, res) {
     const targetValor = Number(stdNext.Valor || currentValor);
 
     const exclude = await getAskedQuestionIds(id_evaluacion);
+    const preferAreas = await getPreferAreasBalanced(id_evaluacion, Number(id_materia));
+    const minCountAreas = new Set(preferAreas);
 
+    // Intento IA
     let nextQ = null;
     try {
       const rankRes = await IA.rank({
@@ -935,38 +1189,44 @@ async function submitAnswer(req, res) {
       });
       nextQ = rankRes?.items?.[0] || null;
     } catch (e) {
-      warn("IA.rank falló en answer; se intentará fallback SQL:", e.message);
+      warn("IA.rank falló en answer; fallback SQL:", e.message);
     }
 
-    // Fallback SQL si IA no devolvió nada
+    // balanceo por áreas
+    if (nextQ) {
+      try {
+        const areaNext = nextQ.id_area ?? (await getAreaIdFromPregunta(Number(nextQ.id_pregunta)));
+        if (!minCountAreas.has(areaNext)) {
+          const balanced = await pickNextQuestionBalanced({
+            id_materia: Number(id_materia),
+            targetValor,
+            exclude,
+            preferAreas
+          });
+          if (balanced) nextQ = balanced;
+        }
+      } catch {}
+    }
     if (!nextQ) {
-      const { rows } = await db.query(
-        `
-        SELECT p."id_pregunta", p."enunciado"
-        FROM "Pregunta" p
-        JOIN "Estandar" e ON e."id_estandar" = p."id_estandar"
-        JOIN "Tema"     t ON t."id_tema"     = e."id_tema"
-        JOIN "Area"     a ON a."id_area"     = t."id_area"
-        WHERE a."id_materia" = $1
-          AND NOT (p."id_pregunta" = ANY($3))
-        ORDER BY ABS(e."Valor"::numeric - $2::numeric) ASC, p."id_pregunta" ASC
-        LIMIT 1
-        `,
-        [ Number(id_materia), targetValor, (exclude && exclude.length ? exclude : [0]) ]
-      );
-      if (rows.length) {
-        nextQ = { id_pregunta: Number(rows[0].id_pregunta), enunciado: rows[0].enunciado };
-      }
+      nextQ = await pickNextQuestionBalanced({
+        id_materia: Number(id_materia),
+        targetValor,
+        exclude,
+        preferAreas
+      });
     }
 
-    // Si sigue sin haber siguiente, finalizar con áreas
+    // finalizar si no hay siguiente
     if (!nextQ) {
       await closeEvaluacionIfPossible(id_evaluacion);
       const areas = await getAreaResults(id_evaluacion);
-      return res.json({ ok:true, correcta, finished:true, areas, question:null });
+      const summary = summarizeAreas(areas);
+      await saveSummaryForEvaluacion(id_evaluacion, summary);
+      await saveAreaSnapshots(id_evaluacion, areas);
+      return res.json({ ok:true, correcta, finished:true, areas, summary, question:null });
     }
 
-    // registrar siguiente pregunta en el detalle
+    // registrar siguiente
     const { rows: cRows2 } = await db.query(
       `SELECT COUNT(1) AS c FROM "Detalle_evaluacion" WHERE "id_evaluacion"=$1`,
       [id_evaluacion]
@@ -984,6 +1244,12 @@ async function submitAnswer(req, res) {
 
     const opciones  = await loadOptionsFromDB(Number(nextQ.id_pregunta));
     const enunciado = nextQ.enunciado || (await getEnunciado(Number(nextQ.id_pregunta)));
+    const valorNext = await getValorFromPregunta(Number(nextQ.id_pregunta));
+
+    let nextAreaId = null;
+    try { nextAreaId = Number(nextQ.id_area ?? (await getAreaIdFromPregunta(Number(nextQ.id_pregunta)))); } catch {}
+    let nextAreaName = null;
+    try { if (nextAreaId) nextAreaName = await getAreaNameById(nextAreaId); } catch {}
 
     return res.json({
       ok: true,
@@ -992,8 +1258,11 @@ async function submitAnswer(req, res) {
         id_pregunta: Number(nextQ.id_pregunta),
         enunciado,
         opciones,
+        id_area: nextAreaId ?? null,
+        area: nextAreaName ?? null,
+        valor: Number(valorNext ?? 0),  // ← valor del ítem siguiente
       },
-      valor_estandar: targetValor,
+      valor_estandar: targetValor,      // solo para navegación interna
     });
   } catch (err) {
     warn("answer error:", err);
@@ -1007,20 +1276,18 @@ async function endSession(req, res) {
     const id_evaluacion = Number(req.params.id);
     await closeEvaluacionIfPossible(id_evaluacion);
 
-    // devolver áreas al finalizar manualmente
     const areas = await getAreaResults(id_evaluacion);
+    const summary = summarizeAreas(areas);
+    await saveSummaryForEvaluacion(id_evaluacion, summary);
+    await saveAreaSnapshots(id_evaluacion, areas);
 
-    return res.json({ ok:true, ended:true, areas });
+    return res.json({ ok:true, ended:true, areas, summary });
   } catch (err) {
     warn("end error:", err);
     res.status(500).json({ ok:false, msg: err.message || "Error al finalizar sesión" });
   }
 }
 
-/**
- * GET /api/adaptative/session/:id/areas
- * Entrega notas por área para la evaluación dada
- */
 async function areasByEvaluacion(req, res) {
   try {
     const id_evaluacion = Number(
@@ -1032,7 +1299,8 @@ async function areasByEvaluacion(req, res) {
       return res.status(400).json({ ok:false, msg:"id_evaluacion requerido" });
     }
     const areas = await getAreaResults(id_evaluacion);
-    return res.json({ ok:true, areas });
+    const summary = summarizeAreas(areas);
+    return res.json({ ok:true, areas, summary });
   } catch (err) {
     warn("areasByEvaluacion error:", err);
     res.status(500).json({ ok:false, msg: err.message || "Error al obtener áreas" });
