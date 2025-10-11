@@ -12,9 +12,13 @@ import estudiantesRouter from "./routes/estudiantes.js";
 import waitroomRouter from "./routes/waitroom.js";
 import adaptativeRouter from "./routes/adaptative.js";
 import authRouter from "./routes/auth.js";
-// 👇 Listado de evaluaciones para estudiante (por grado)
+// Estudiante
 import estudianteEvalRouter from "./routes/estudiante/estudiante-evaluaciones.js";
 import estudiantePracticasRouter from "./routes/estudiante/practicas.js";
+import estudianteHistorialRouter from "./routes/estudiante/historial.js";
+// Participantes y recomendaciones
+import evaluacionesParticipantesRouter from "./routes/evaluaciones.participantes.js";
+import recomendacionesRouter from "./routes/recomendaciones.js";
 
 // Socket.IO
 import attachWaitroom from "./realtime/waitroom.js";
@@ -70,13 +74,19 @@ app.use("/api/waitroom", waitroomRouter);
 app.use("/api/adaptative", adaptativeRouter);
 app.get("/api/ping", (_req, res) => res.json({ ok: true, base: "/api" }));
 
-// Router real de prácticas recomendadas
+// ⚠️ MONTA RECOMENDACIONES ANTES que /api/evaluaciones
+// para que /api/evaluaciones/:id/participantes/:carne/recomendaciones|estandares
+// caiga en este router y no en el de participantes.
+app.use("/api", recomendacionesRouter);
+
+// Luego el router de participantes de evaluaciones
+app.use("/api/evaluaciones", evaluacionesParticipantesRouter);
+
+// Router real de prácticas recomendadas (estudiante)
 app.use("/api/estudiante/practicas", estudiantePracticasRouter);
 
 // ---- Alias que redirigen al mismo handler de /estudiante/practicas/recomendadas
-// (el frontend intenta estas URLs como fallback)
 const proxyToPracticas = (req, res, next) => {
-  // Forzamos a que el router procese /recomendadas conservando el querystring
   const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
   req.url = "/recomendadas" + qs;
   estudiantePracticasRouter.handle(req, res, next);
@@ -84,7 +94,13 @@ const proxyToPracticas = (req, res, next) => {
 app.get("/api/estudiante/recomendadas", proxyToPracticas);
 app.get("/api/adaptative/recommendations", proxyToPracticas);
 
-// Prefijo /backend/api (compatibilidad)
+// Historial del estudiante
+app.use("/api/estudiante/historial", estudianteHistorialRouter);
+
+// Alias de compatibilidad que tu frontend intenta como fallback
+app.use("/api/evaluaciones/historial", estudianteHistorialRouter);
+
+// ===== Prefijo /backend/api (compatibilidad) =====
 app.use("/backend/api/auth", authRouter);
 app.use("/backend/api/sesiones", sesionesRouter);
 app.use("/backend/api/docente/evaluaciones", docenteEvalRouter);
@@ -98,6 +114,9 @@ app.get("/backend/api/ping", (_req, res) =>
   res.json({ ok: true, base: "/backend/api" })
 );
 
+// Recomendaciones también bajo /backend/api por compat
+app.use("/backend/api", recomendacionesRouter);
+
 // ---- Compat también para prácticas bajo /backend/api
 app.use("/backend/api/estudiante/practicas", estudiantePracticasRouter);
 app.get("/backend/api/estudiante/recomendadas", proxyToPracticas);
@@ -108,7 +127,6 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 
 // ================= HTTP + Socket.IO =================
 const server = http.createServer(app);
-// Adjuntar Socket.IO (no abre puerto por sí solo)
 attachWaitroom(server, { corsOrigin: ORIGINS, path: "/socket.io" });
 
 // ================= 404 =================
@@ -149,5 +167,4 @@ if (isDirectRun) {
   });
 }
 
-// Exporta para que otros entrypoints (p. ej. backend/App.js) puedan reutilizar
 export { app, server, PORT, ORIGINS };
