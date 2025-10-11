@@ -31,6 +31,11 @@ const Icon = {
       <path d="M7 3h10a2 2 0 0 1 2 2v14l-4-2-4 2-4-2-4 2V5a2 2 0 0 1 2-2zm2 4h6v2H9V7zm0 4h6v2H9v-2z" />
     </svg>
   ),
+  practice: () => (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 21h6v-2H9v2zm3-19a7 7 0 0 0-4.95 11.95c.6.6.95 1.41.95 2.26V17h8v-.79c0-.85.35-1.66.95-2.26A7 7 0 0 0 12 2z" />
+    </svg>
+  ),
   menu: () => (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z" />
@@ -56,6 +61,10 @@ export default function StudentSidebar() {
     }
   }, []);
   const idUsuario = auth.id_usuario ?? auth.idUsuario ?? auth.userId ?? null;
+
+  // Detección explícita de rol de estudiante (por si se reusa el componente)
+  const rol = String(auth.rol || auth.role || auth.tipo || auth.perfil || "").toLowerCase();
+  const isStudent = rol.includes("estud") || rol.includes("alum") || !!auth.carne_estudiante;
 
   // Perfil mostrado en el header del sidebar
   const [perfil, setPerfil] = useState({
@@ -154,6 +163,19 @@ export default function StudentSidebar() {
             </span>
             <span className="sb-label">Evaluaciones</span>
           </NavLink>
+
+          {/* NUEVO: Prácticas recomendadas (solo estudiante) */}
+          {isStudent && (
+            <NavLink
+              to="/estudiante/practicas"
+              className={({ isActive }) => `sb-link ${isActive ? "active" : ""}`}
+            >
+              <span className="sb-icon">
+                <Icon.practice />
+              </span>
+              <span className="sb-label">Prácticas recomendadas</span>
+            </NavLink>
+          )}
 
           <NavLink
             to="/estudiante/historial"

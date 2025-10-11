@@ -1,0 +1,207 @@
+/* ===============================================
+   Prácticas recomendadas — Estilo sobrio / calm
+   =============================================== */
+
+:root{
+  --bg-0:#0b0f14;
+  --bg-1:#101621;
+  --bg-2:#131a22;
+
+  --surface:#121823;
+  --surface-2:#151c2a;
+
+  --text-1:#e6ebf3;
+  --text-2:#a8b2c3;
+  --text-3:#8a94a7;
+
+  --border:rgba(255,255,255,.08);
+
+  --accent:#8fb4ff;   /* para pequeños acentos */
+  --radius-xl:14px;
+  --radius-lg:12px;
+  --radius-md:10px;
+
+  --container:1100px;
+  --sticky-top:12px;
+}
+
+/* Layout */
+.pr-app{
+  background: var(--bg-0);
+  min-height:100vh;
+  color:var(--text-1);
+}
+.with-sidebar .pr-main{ margin-left:260px; } /* ajusta si tu sidebar mide distinto */
+
+.pr-main{
+  max-width:var(--container);
+  margin:0 auto;
+  padding:28px 24px 72px;
+}
+
+/* Encabezado */
+.pr-hero h1{
+  margin:0 0 6px;
+  font-size:clamp(28px,3.2vw,40px);
+  font-weight:800;
+  color:#f1f5ff;
+}
+.pr-hero p{
+  margin:0 0 18px;
+  color:var(--text-3);
+}
+
+/* Carga */
+.pr-skeleton{
+  height:48px;
+  border-radius:var(--radius-lg);
+  background:var(--surface);
+  border:1px solid var(--border);
+}
+
+/* Alertas */
+.pr-alert{
+  padding:12px 14px;
+  border-radius:var(--radius-md);
+  border:1px solid var(--border);
+  background:var(--surface);
+  color:var(--text-1);
+  margin:10px 0 18px;
+}
+.pr-alert-error{ border-color:rgba(244,63,94,.35); }
+
+/* ===== Grupos (RIT 1–10) ===== */
+.pr-group{ margin:22px 0 28px; }
+
+.pr-group-header{
+  position:sticky;
+  top:var(--sticky-top);
+  z-index:3;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:12px 14px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:var(--surface);
+}
+.pr-group-header h2{
+  margin:0;
+  font-size:16px;
+  letter-spacing:.2px;
+  color:#f2f6ff;
+}
+.pr-group-count{
+  margin-left:auto;
+  font-size:12px;
+  padding:6px 10px;
+  border-radius:999px;
+  background:var(--surface-2);
+  border:1px solid var(--border);
+  color:var(--text-2);
+}
+
+/* ===== Áreas ===== */
+.pr-area{ margin-top:14px; }
+
+.pr-area-header{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin:6px 2px 8px;
+}
+.pr-area-title{
+  display:flex; align-items:center; gap:8px;
+}
+.pr-area-title h3{
+  margin:0;
+  font-size:15px;
+  font-weight:700;
+  color:#eaf0ff;
+}
+.pr-area-divider{
+  width:6px; height:16px; border-radius:3px;
+  background:#6f95e6; /* acento sobrio */
+  opacity:.9;
+}
+.pr-area-count{
+  margin-left:auto;
+  font-size:12px;
+  color:var(--text-3);
+  padding:2px 8px;
+  border-radius:999px;
+  border:1px solid var(--border);
+}
+
+/* ===== Lista / Ítems ===== */
+.pr-list{ list-style:none; margin:0; padding:0; }
+
+.pr-item{
+  border:1px solid var(--border);
+  background:var(--surface);
+  border-radius:var(--radius-xl);
+  padding:14px 16px;
+  margin:8px 2px;
+  transition:background .12s ease, border-color .12s ease;
+}
+.pr-item:hover{
+  background:var(--surface-2);
+  border-color:rgba(255,255,255,.12);
+}
+
+.pr-item-main{ display:grid; gap:6px; }
+.pr-item-top{ display:flex; align-items:center; gap:8px; }
+.pr-item-badges{ display:flex; gap:8px; flex-wrap:wrap; }
+
+/* Badges (sin iconos, sin brillo) */
+.pr-badge,
+.pr-badge-alt{
+  font-size:12px;
+  line-height:1;
+  padding:7px 10px 6px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:#172232;
+  color:#dfe6f3;
+}
+.pr-badge-alt{
+  background:#1b2433;
+  color:#dcdfea;
+}
+
+.pr-item-title{
+  margin:0;
+  font-size:16px;
+  font-weight:700;
+  letter-spacing:.2px;
+  color:#f0f4ff;
+}
+
+/* Empty */
+.pr-empty{
+  margin-top:18px;
+  padding:14px 16px;
+  border-radius:var(--radius-lg);
+  border:1px dashed var(--border);
+  background:var(--surface);
+  color:var(--text-2);
+}
+
+/* ===== Responsive ===== */
+@media (max-width:1200px){
+  .with-sidebar .pr-main{ margin-left:240px; }
+  :root{ --container:980px; }
+}
+@media (max-width:1024px){
+  .with-sidebar .pr-main{ margin-left:220px; }
+  :root{ --container:880px; }
+}
+@media (max-width:768px){
+  .with-sidebar .pr-main{ margin-left:0; }
+  .pr-main{ padding:18px 16px 60px; }
+  .pr-item{ padding:12px 12px; }
+  .pr-group-header{ border-radius:10px; }
+}
+
+/* compat clases antiguas */
+.page.practicas{ background:transparent; }

@@ -1,134 +1,130 @@
-// api/routes/adaptative.js
+// ESM router que importa controller CJS correcto y añade diagnósticos
 import { Router } from "express";
-import AdaptiveController from "../controllers/adaptativeController.cjs";
+
+// ⚠️ CJS interop seguro
+import ctrlNs from "../controllers/adaptativeController.cjs";
+const ctrl = ctrlNs?.default && typeof ctrlNs.default === "object" ? ctrlNs.default : ctrlNs;
+
+// Verificación de exports
+const {
+  startSession,
+  submitAnswer,
+  endSession,
+  areasByEvaluacion,
+} = ctrl;
+
+// DB para diagnósticos
+import dbNs from "../utils/db.cjs";
+const db = dbNs?.default ?? dbNs;
 
 const router = Router();
 
-// ===== Helpers =====
+// ====== Rutas principales ======
+router.post("/session/start", (req, res, next) => {
+  console.log("[RT ADAPT] /session/start user=", req.user?.id_usuario, "body=", req.body);
+  return startSession(req, res, next);
+});
 
-// Wrap async handlers para evitar try/catch repetidos
-const asyncH = (fn) => (req, res, next) =>
-  Promise.resolve(fn(req, res, next)).catch(next);
+router.post("/session/:id/answer", (req, res, next) => {
+  console.log("[RT ADAPT] /session/:id/answer id=", req.params?.id);
+  return submitAnswer(req, res, next);
+});
 
-// Validador de campos obligatorios en body
-const must = (...fields) => (req, res, next) => {
-  const missing = fields.filter(
-    (f) => req.body[f] === undefined || req.body[f] === null
-  );
-  if (missing.length) {
-    return res
-      .status(400)
-      .json({ ok: false, msg: `Faltan campos: ${missing.join(", ")}` });
+router.post("/session/:id/end", (req, res, next) => {
+  console.log("[RT ADAPT] /session/:id/end id=", req.params?.id);
+  return endSession(req, res, next);
+});
+
+router.get("/evaluaciones/:id/areas", (req, res, next) => {
+  console.log("[RT ADAPT] /evaluaciones/:id/areas id=", req.params?.id);
+  return areasByEvaluacion(req, res, next);
+});
+
+// ====== DIAGNÓSTICOS ======
+
+// 1) ¿Qué DB estoy usando?
+router.get("/__diag/db", async (_req, res) => {
+  try {
+    const q = `
+      SELECT current_database() AS db,
+             current_user      AS "user",
+             inet_server_addr()::text AS host,
+             inet_server_port()       AS port
+    `;
+    const { rows } = await db.query(q);
+    res.json({ ok: true, env_db: rows[0] });
+  } catch (e) {
+    console.error("[ADAPTIVE DIAG] db", e);
+    res.status(500).json({ ok: false, msg: e.message });
   }
-  next();
-};
+});
 
-// Parseo seguro a número (si aplica)
-const asNum = (v) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-};
+// 2) ¿Cuáles columnas NOT NULL pueden estar bloqueando INSERT en Evaluacion/Matricula?
+router.get("/__diag/schema", async (_req, res) => {
+  try {
+    const q = (t) => `
+      SELECT column_name, is_nullable, column_default
+      FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='${t}'
+      ORDER BY ordinal_position
+    `;
+    const [ev, mat] = await Promise.all([
+      db.query(q("Evaluacion")),
+      db.query(q("Matricula"))
+    ]);
+    res.json({ ok: true, Evaluacion: ev.rows, Matricula: mat.rows });
+  } catch (e) {
+    console.error("[ADAPTIVE DIAG] schema", e);
+    res.status(500).json({ ok: false, msg: e.message });
+  }
+});
 
-// ===== Rutas =====
+// 3) Fuerza una escritura mínima en recomendacion_estandar (para aislar permisos/DB)
+router.post("/__diag/force-reco", async (req, res) => {
+  const carne = String(req.body?.carne ?? "").trim();
+  const id_estandar = Number(req.body?.id_estandar);
+  const prioridad = Number(req.body?.prioridad ?? 1);
+  if (!carne || !Number.isFinite(id_estandar)) {
+    return res.status(400).json({ ok: false, msg: "carne e id_estandar requeridos" });
+  }
+  try {
+    // asegura índice único si no existe (no falla si ya está)
+    await db.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_indexes
+          WHERE schemaname='public' AND indexname='ux_reco_civ'
+        ) THEN
+          CREATE UNIQUE INDEX ux_reco_civ
+          ON "recomendacion_estandar" ("carne_estudiante","id_estandar","vigente");
+        END IF;
+      END
+      $$;
+    `);
 
-// Healthcheck opcional
-router.get("/", (req, res) => res.json({ ok: true, msg: "adaptive ok" }));
+    const { rows } = await db.query(
+      `
+      INSERT INTO "recomendacion_estandar"
+        ("carne_estudiante","id_estandar","motivo","fuente","prioridad","creado_en","vigente")
+      VALUES ($1,$2,'diag','diag', $3, NOW(), TRUE)
+      ON CONFLICT ("carne_estudiante","id_estandar","vigente")
+      DO UPDATE SET "prioridad" = "recomendacion_estandar"."prioridad" + EXCLUDED."prioridad"
+      RETURNING *
+      `,
+      [carne, id_estandar, prioridad]
+    );
 
-/**
- * Inicia sesión adaptativa y devuelve la 1ª pregunta
- * Body:
- *  - carne_estudiante: string | number   (obligatorio)
- *  - id_materia: number                  (obligatorio)
- *  - num_preg_max: number                (opcional)
- *  - id_sesion: number                   (opcional)
- */
-router.post(
-  "/session/start",
-  // requireAuth, // <- si tienes middleware de auth, actívalo aquí
-  must("carne_estudiante", "id_materia"),
-  asyncH(async (req, res) => {
-    console.log("[ADAPTIVE] POST /session/start body =", req.body);
+    const cnt = await db.query(
+      `SELECT COUNT(*)::int AS c FROM "recomendacion_estandar" WHERE BTRIM("carne_estudiante"::text)=BTRIM($1::text)`,
+      [carne]
+    );
 
-    // Normaliza tipos numéricos si fuera necesario
-    req.body.id_materia = asNum(req.body.id_materia);
-    if (req.body.num_preg_max !== undefined) {
-      req.body.num_preg_max = asNum(req.body.num_preg_max);
-    }
-    if (req.body.id_sesion !== undefined) {
-      req.body.id_sesion = asNum(req.body.id_sesion);
-    }
-
-    return AdaptiveController.startSession(req, res);
-  })
-);
-
-/**
- * Envía respuesta y devuelve la siguiente (o fin)
- * Params:
- *  - :id = id_evaluacion (numérico)
- * Body:
- *  - id_pregunta: number                 (obligatorio)
- *  - id_opcion: number                   (obligatorio)
- *  - id_materia: number                  (obligatorio)
- *  - valor_estandar_actual: number       (opcional)
- *  - tiempo_respuesta: number (segundos) (opcional)
- *  - num_preg_max: number                (opcional)
- */
-router.post(
-  "/session/:id/answer",
-  // requireAuth,
-  must("id_pregunta", "id_opcion", "id_materia"),
-  asyncH(async (req, res) => {
-    console.log("[ADAPTIVE] POST /session/:id/answer params =", req.params);
-    console.log("[ADAPTIVE] POST /session/:id/answer body   =", req.body);
-
-    // Normaliza ID de evaluación y demás numéricos
-    req.params.id = asNum(req.params.id);
-    req.body.id_pregunta = asNum(req.body.id_pregunta);
-    req.body.id_opcion = asNum(req.body.id_opcion);
-    req.body.id_materia = asNum(req.body.id_materia);
-    if (req.body.valor_estandar_actual !== undefined) {
-      req.body.valor_estandar_actual = asNum(req.body.valor_estandar_actual);
-    }
-    if (req.body.tiempo_respuesta !== undefined) {
-      req.body.tiempo_respuesta = asNum(req.body.tiempo_respuesta);
-    }
-    if (req.body.num_preg_max !== undefined) {
-      req.body.num_preg_max = asNum(req.body.num_preg_max);
-    }
-
-    return AdaptiveController.submitAnswer(req, res);
-  })
-);
-
-/**
- * Finaliza la sesión manualmente (opcional)
- * Params:
- *  - :id = id_evaluacion (numérico)
- */
-router.post(
-  "/session/:id/end",
-  // requireAuth,
-  asyncH(async (req, res) => {
-    console.log("[ADAPTIVE] POST /session/:id/end params =", req.params);
-    req.params.id = asNum(req.params.id);
-    return AdaptiveController.endSession(req, res);
-  })
-);
-
-/**
- * Obtiene notas por área para una evaluación
- * Params:
- *  - :id = id_evaluacion (numérico)
- */
-router.get(
-  "/session/:id/areas",
-  // requireAuth,
-  asyncH(async (req, res) => {
-    console.log("[ADAPTIVE] GET /session/:id/areas params =", req.params);
-    req.params.id = asNum(req.params.id);
-    return AdaptiveController.areasByEvaluacion(req, res);
-  })
-);
+    res.json({ ok: true, row: rows[0], count_for_carne: cnt.rows[0]?.c ?? 0 });
+  } catch (e) {
+    console.error("[ADAPTIVE DIAG] force-reco", e);
+    res.status(500).json({ ok: false, msg: e.message });
+  }
+});
 
 export default router;

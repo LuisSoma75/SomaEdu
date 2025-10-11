@@ -5,6 +5,7 @@ import cors from "cors";
 import { pathToFileURL } from "url";
 
 // Routers
+import debugRouter from "./routes/_debug.js";
 import sesionesRouter from "./routes/sesiones.js";
 import docenteEvalRouter from "./routes/docente-evaluaciones.js";
 import estudiantesRouter from "./routes/estudiantes.js";
@@ -13,6 +14,7 @@ import adaptativeRouter from "./routes/adaptative.js";
 import authRouter from "./routes/auth.js";
 // 👇 Listado de evaluaciones para estudiante (por grado)
 import estudianteEvalRouter from "./routes/estudiante/estudiante-evaluaciones.js";
+import estudiantePracticasRouter from "./routes/estudiante/practicas.js";
 
 // Socket.IO
 import attachWaitroom from "./realtime/waitroom.js";
@@ -68,6 +70,20 @@ app.use("/api/waitroom", waitroomRouter);
 app.use("/api/adaptative", adaptativeRouter);
 app.get("/api/ping", (_req, res) => res.json({ ok: true, base: "/api" }));
 
+// Router real de prácticas recomendadas
+app.use("/api/estudiante/practicas", estudiantePracticasRouter);
+
+// ---- Alias que redirigen al mismo handler de /estudiante/practicas/recomendadas
+// (el frontend intenta estas URLs como fallback)
+const proxyToPracticas = (req, res, next) => {
+  // Forzamos a que el router procese /recomendadas conservando el querystring
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  req.url = "/recomendadas" + qs;
+  estudiantePracticasRouter.handle(req, res, next);
+};
+app.get("/api/estudiante/recomendadas", proxyToPracticas);
+app.get("/api/adaptative/recommendations", proxyToPracticas);
+
 // Prefijo /backend/api (compatibilidad)
 app.use("/backend/api/auth", authRouter);
 app.use("/backend/api/sesiones", sesionesRouter);
@@ -76,9 +92,16 @@ app.use("/backend/api/estudiantes", estudiantesRouter);
 app.use("/backend/api/estudiante/evaluaciones", estudianteEvalRouter);
 app.use("/backend/api/waitroom", waitroomRouter);
 app.use("/backend/api/adaptative", adaptativeRouter);
+app.use("/api/_debug", debugRouter);
+app.use("/backend/api/_debug", debugRouter);
 app.get("/backend/api/ping", (_req, res) =>
   res.json({ ok: true, base: "/backend/api" })
 );
+
+// ---- Compat también para prácticas bajo /backend/api
+app.use("/backend/api/estudiante/practicas", estudiantePracticasRouter);
+app.get("/backend/api/estudiante/recomendadas", proxyToPracticas);
+app.get("/backend/api/adaptative/recommendations", proxyToPracticas);
 
 // Health simple en raíz
 app.get("/health", (_req, res) => res.json({ ok: true }));

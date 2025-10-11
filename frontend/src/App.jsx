@@ -34,6 +34,7 @@ import EvaluacionesDisponibles from "./pages/estudiante/EvaluacionesDisponibles.
 import HistorialEvaluacion from "./pages/estudiante/HistorialEvaluacion.jsx";
 import SalaDeEspera from "./pages/estudiante/SalaDeEspera.jsx";
 import ResolverEvaluacion from "./pages/estudiante/ResolverEvaluacion.jsx";
+import PracticasRecomendadas from "./pages/estudiante/PracticasRecomendadas.jsx";
 
 /* =========================
    Helper de auth (localStorage) — TOLERANTE
@@ -230,6 +231,15 @@ function App() {
           element={
             <EstudianteGuard>
               <ResolverEvaluacion />
+            </EstudianteGuard>
+          }
+        />
+
+        <Route
+          path="/estudiante/practicas"
+          element={
+            <EstudianteGuard>
+              <PracticasRecomendadas />
             </EstudianteGuard>
           }
         />
